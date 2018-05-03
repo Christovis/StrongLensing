@@ -1,0 +1,2 @@
+$CC -Wall -Ofast -fopenmp -fPIC -c rtf.c
+$CC -shared -fopenmp rtf.o -o ./librtf.so

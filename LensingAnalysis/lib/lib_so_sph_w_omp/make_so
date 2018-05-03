@@ -1,0 +1,3 @@
+gcc -Wall -Ofast -fopenmp -fPIC -c *.c
+gcc -shared -fopenmp *.o -o ./libsphsdens.so
+rm ./*.o
