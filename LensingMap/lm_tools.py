@@ -29,6 +29,22 @@ def ensure_dir(f):
         os.makedirs(f)
 
 
+def source_selection(src_id, src_z, halo_id):
+    """
+    Find redshift of sources which are likely to be multiple imaged
+    Input:
+        src_id[np.array(int)] - LightCone-IDs of sources
+        src_z[np.array(float)] - redshift of sources
+        halo_id[int] - ID of subhalo acting as lens
+    Output:
+        zs[int] - redshift of source
+    """
+    src_indx = np.where(src_id == halo_id)
+    indx = np.argmax(src_z[src_indx[0]])
+    zs = src_z[src_indx[0][indx]]
+    return zs
+
+
 def sigma_crit(zLens, zSource):
     Ds = Planck15.angular_diameter_distance(zSource)
     Dl = Planck15.angular_diameter_distance(zLens)
