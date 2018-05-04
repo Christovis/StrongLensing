@@ -3,7 +3,8 @@ import constants as cc
 import CosmoDist as cd
 import numpy as np
 from astropy import units as u
-from astropy.cosmology import Planck15
+from astropy import constants as const
+from astropy.cosmology import Planck15 as cosmo
 import readsubf
 import readsnap
 
@@ -33,16 +34,15 @@ def Einstein_ring(veldisp, c, z, Dls, Ds, dim):
     # Einstein angle
     if (Dls is None or Ds is None):
         # For Source at Inf.
-        theta_E = 4*np.pi*(veldisp/c)**2  # [rad]
+        A_E = 4*np.pi*(veldisp/c)**2*u.rad  # [arcsec]
     else:
-        theta_E = 4*np.pi*(veldisp/c)**2*(Dls/Ds)  # [rad]
-    if dim == 'kpc':
-        # convert radians to kpc
-        R_E = theta_E*(180*3600/(np.pi*60)) * \
-        Planck15.kpc_proper_per_arcmin(z)*(u.arcmin/u.kpc)
-        return theta_E, R_E
+        A_E = 4*np.pi*(veldisp/c)**2*(Dls/Ds)*u.rad  # [arcsec]
+    if dim == 'Mpc':
+        # convert radians to Mpc
+        R_E = theta_E.to_value('rad')*cosmo.angular_diameter_distance(z).to_value('Mpc')
+        return R_E
     elif dim == 'rad':
-        return theta_E
+        return A_E.to_value('rad')
 
 
 def angle(v1, v2):
@@ -134,10 +134,10 @@ def SNeIa_distr(yr, V, zmid, agefunc, redfunc, **cosmosim):
 
 def Einstein_Volume(A_E, distmid_p, distbet_p):
     # see Goldstein & Oguri
-    radiusE_inf = [8*A_E*dist for dist in distmid_p]  # [Mpc]
+    fov_radii = [4*A_E*dist for dist in distmid_p]  # [Mpc]
     # Volume Element  [Mpc**3]
-    V = [2*np.pi*radiusE_inf[j]**2*distbet_p[j] for j in range(len(distbet_p))]
-    return V, radiusE_inf 
+    V = [2*np.pi*fov_radii[j]**2*distbet_p[j] for j in range(len(distbet_p))]
+    return V, fov_radii 
 
 
 def select_halos(Halos):

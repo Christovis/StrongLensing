@@ -1,14 +1,19 @@
+from __future__ import division
+import os
 import sys
+import numpy as np
+from astropy.cosmology import Planck15
+from astropy import units as u
+from astropy import constants as const
+from scipy.interpolate import interp1d
+import h5py
 sys.path.append('/cosma5/data/dp004/dc-beck3')
+import readsnap
+import readsubf
+import readlensing as rf
 import CosmoDist as cd
 from lc_tools import Lightcone as LC
 import lc_randomize as LCR
-import numpy as np
-import re
-from scipy.interpolate import interp1d
-import readsubf
-import readsnap
-import h5py
 
 
 def merge_dicts(x, y):
@@ -31,37 +36,12 @@ def check_length_unit(filename):
     return UnitLength
 
 ###########################################################################
-
-data = open('/cosma5/data/dp004/dc-beck3/shell_script/LCSettings.txt', 'r')
-Settings = data.readlines()
-sim_dir = []
-sim_phy = []
-sim_name = []
-sim_col = []
-hf_dir = []
-lc_dir = []
-glafic_dir = []
-HQ_dir = []
-for k in range(len(Settings)):
-    if 'Python' in Settings[k].split():
-        HQdir = Settings[k+1].split()[0]
-        HQ_dir.append(HQdir)
-    if 'Simulation' in Settings[k].split():
-        [simphy, simname] = Settings[k+1].split()
-        sim_phy.append(simphy)
-        sim_name.append(simname)
-        [simdir, simcol] = Settings[k+2].split()
-        sim_dir.append(simdir)
-        sim_col.append(simcol)
-        [hfdir, hf_name] = Settings[k+3].split()
-        hf_dir.append(hfdir)
-        lcdir = Settings[k+4].split()[0]
-        lc_dir.append(lcdir)
-        glaficdir = Settings[k+5].split()[0]
-        glafic_dir.append(glaficdir)
+# Load Simulation Specifications
+LCSettings = '/cosma5/data/dp004/dc-beck3/shell_script/LCSettings.txt'
+sim_dir, sim_phy, sim_name, sim_col, hf_dir, lc_dir, glafic_dir, HQ_dir = rf.Simulation_Specs(LCSettings)
 
 # Cosmological Constants
-c = 299792.458  # [km/s] speed of light
+c = const.c.to_value('km/s')
 # Light Cone parameters
 zmax = 1.  # highest redshift
 alpha = 0.522  # apex angle
@@ -71,23 +51,24 @@ coneaxis = [1, 0, 0]  # unit vector
 ###########################################################################
 # Iterate through Simulations
 for sim in range(len(sim_dir)):
-    snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d.0'
+    snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
     # Load Simulation Header
-    num_of_snapshots = len(open(sim_dir[sim]+'arepo/output_list_new.txt', 'r').readlines())-1
+    #snap_tot_num = len(open(sim_dir[sim]+'arepo/output_list_new.txt', 'r').readlines())-1
     # Length Unit
     LengthUnit = 'Mpc'
     #LengthUnit = check_length_unit(sim_dir[sim]+'arepo/param.txt')
-    #num_of_snapshots = 23
-    header = readsnap.snapshot_header(snapfile % (num_of_snapshots, num_of_snapshots))
-    # Cosmological Constants
+    #snap_tot_num = 23
+    snap_tot_num = 45
+    header = readsnap.snapshot_header(snapfile % (snap_tot_num, snap_tot_num))
+    # Cosmological Parameters
     cosmo = {'omega_M_0' : header.omega_m,
             'omega_lambda_0' : header.omega_l,
             'omega_k_0' : 0.0,
             'h' : header.hubble}
-
-    # Redshift Steps; past to present
+    print('holliiii')
+    #Redshift Steps; past to present
     z_sim = []
-    for i in range(num_of_snapshots, -1, -1):
+    for i in range( snap_tot_num, -1, -1):
         header = readsnap.snapshot_header(snapfile % (i, i))
         if header.redshift > zmax:
             break
@@ -108,7 +89,7 @@ for sim in range(len(sim_dir)):
     CoDi = CoDi[1:]
     # Load Subhalo properties for z=0
     snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
-    box = LC(hf_dir[sim], snapfile, num_of_snapshots, header, hf_name, LengthUnit)
+    box = LC(hf_dir[sim], snapfile, snap_tot_num, header, hf_name, LengthUnit)
     boxlength = box.boxlength(box.subprop['pos_b'])
     # Define Observer Position
     # boxlength not correct if subpos in comoving distance!
@@ -120,7 +101,7 @@ for sim in range(len(sim_dir)):
 
     translation_z = 0
     boxmark = 32123
-    snapshot = num_of_snapshots
+    snapshot = snap_tot_num
     # Walk through comoving distance until zmax
     for i in range(len(CoDi)):
         print('CoDi[i]', CoDi[i])
