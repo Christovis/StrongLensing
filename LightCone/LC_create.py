@@ -7,13 +7,14 @@ from astropy import units as u
 from astropy import constants as const
 from scipy.interpolate import interp1d
 import h5py
-sys.path.append('/cosma5/data/dp004/dc-beck3')
-import readsnap
-import readsubf
-import readlensing as rf
 import CosmoDist as cd
 from lc_tools import Lightcone as LC
 import lc_randomize as LCR
+sys.path.insert(0, '..')  # parent directory
+import readsnap
+import readsubf
+import readlensing as rf
+import imp
 
 
 def merge_dicts(x, y):
@@ -40,6 +41,8 @@ def check_length_unit(filename):
 LCSettings = '/cosma5/data/dp004/dc-beck3/shell_script/LCSettings.txt'
 sim_dir, sim_phy, sim_name, sim_col, hf_dir, lc_dir, glafic_dir, HQ_dir = rf.Simulation_Specs(LCSettings)
 
+hf_name = 'Rockstar'
+
 # Cosmological Constants
 c = const.c.to_value('km/s')
 # Light Cone parameters
@@ -51,21 +54,17 @@ coneaxis = [1, 0, 0]  # unit vector
 ###########################################################################
 # Iterate through Simulations
 for sim in range(len(sim_dir)):
+    print('Create a Light-cone for: ', sim_name[sim])
     snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
-    # Load Simulation Header
-    #snap_tot_num = len(open(sim_dir[sim]+'arepo/output_list_new.txt', 'r').readlines())-1
-    # Length Unit
+    
     LengthUnit = 'Mpc'
-    #LengthUnit = check_length_unit(sim_dir[sim]+'arepo/param.txt')
-    #snap_tot_num = 23
+    # Cosmological Parameters
     snap_tot_num = 45
     header = readsnap.snapshot_header(snapfile % (snap_tot_num, snap_tot_num))
-    # Cosmological Parameters
     cosmo = {'omega_M_0' : header.omega_m,
             'omega_lambda_0' : header.omega_l,
             'omega_k_0' : 0.0,
             'h' : header.hubble}
-    print('holliiii')
     #Redshift Steps; past to present
     z_sim = []
     for i in range( snap_tot_num, -1, -1):
@@ -115,14 +114,14 @@ for sim in range(len(sim_dir)):
             box.subprop['pos_b'] = LCR.translation_s(box.subprop['pos_b'], boxlength)
             box.subprop['pos_b'] = LCR.rotation_s(box.subprop['pos_b'])
             boxmaxdist = np.max(box.subprop['pos_b'][:, 0])
-            if CoDi[i] >= boxmaxdist:
+            if CoDi[i] >= boxmaxdist:  #---------------------------------------
                 # New box does not reach end of z-range')
                 if lc == None:
                     # if lightcone is empty
                     lc = box.fill_lightcone(lc, box.subprop, alpha)
                 else:
                     lc = box.fill_lightcone(lc, box.subprop, alpha)
-            elif CoDi[i] == CoDi[-1]:
+            elif CoDi[i] == CoDi[-1]:  #---------------------------------------
                 # End of Light Cone
                 sub_id = box.find_sub_in_CoDi(box.subprop['pos_b'], CoDi[i], 0)
                 if len(sub_id[0]) != 0:
@@ -145,7 +144,7 @@ for sim in range(len(sim_dir)):
                 else:
                     lc = box.fill_lightcone(lc, box_end, alpha)
                 limit = 1  # End of Light Cone
-            else:
+            else:  #-----------------------------------------------------------
                 # End of z-range reached
                 if boxmark == boxmaxdist:
                     # SimBox extends over more than 2 redshifts

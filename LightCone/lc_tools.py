@@ -1,10 +1,12 @@
+import sys
+import numpy as np
 import CosmoDist as cd
 from astropy import units as u
 from astropy.cosmology import WMAP9
 import Ellipticity as Ell
+sys.path.insert(0, '..')
 import readsubf
 import readsnap
-import numpy as np
 
 
 class Lightcone():
@@ -198,7 +200,6 @@ class Lightcone():
             lc['pa_lc'] = np.concatenate((lc['pa_lc'],
                                           box['pa_b'][indx]),
                                           axis=0)
-            print('lightcon test', len(lc), len(lc['Mvir_lc']), len(lc['ellipse_lc']))
             #del subprop['snapnum'], ['ID']
             #del subprop['pos'], subprop['pos_b'], subprop['Mvir_b'], subprop['M200b_b']
             #del subprop['velmax_b'], subprop['veldisp_b'], subprop['rvir_b']
