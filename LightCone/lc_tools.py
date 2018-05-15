@@ -10,7 +10,7 @@ import readsnap
 
 
 class Lightcone():
-    def __init__(self, hfdir, snap_dir, snapnum, header, halo_finder, LengthUnit):
+    def __init__(self, hfdir, snap_dir, snapnum, halo_finder, LengthUnit):
         """
         Load Subhalo properties of snapshots into Dictionary
         Use:
@@ -23,14 +23,14 @@ class Lightcone():
             halo_finder: Subfind, Rockstar or AHF
         
         Output:
-            subprop_box: dictionary with subhalo properties
+            prop_box: dictionary with subhalo properties
             boxlength: side length of simulated box in units used in simulation
                        (e.g. Mpc/h or kpc/h)
         """
         if halo_finder == 'Subfind':
             subhalos = readsubf.subfind_catalog(hfdir, snapnum, masstab=True)
             subpos = subhalos.sub_pos
-            submass = subhalos.sub_mass*1e10/header.hubble
+            submass = subhalos.sub_mass  # *1e10/header.hubble
             subveldisp = subhalos.sub_veldisp
             subrad = subhalos.sub_halfmassrad
             boxlength = np.max(subpos[:, 0]) - np.min(subpos[:, 0])
@@ -44,12 +44,12 @@ class Lightcone():
             #							  'POS ', parttype=0)
             #sub_e = Ell.ellipticity(subpos, submass, subrad, parpos, 1)
             #subpa = position_angle(principal_axes, los=1)
-            subprop_box = {'pos_b' : subpos,
+            prop_box = {'pos_b' : subpos,
                            'mass_b' : submass,
                            'veldisp_b' : subveldisp}
                            #'ellipse_b' : sub_e}
                            #'pa_b' : subpa}
-            self.subprop = subprop_box # boxlength
+            self.prop = prop_box # boxlength
         elif halo_finder == 'Rockstar':
             hf_dir = hfdir + 'halos_%d.dat' % snapnum
             data = open(hf_dir, 'r')
@@ -90,7 +90,7 @@ class Lightcone():
                     sub_pa.append(PA)
                     iki += 1
             subID = np.array(subID)
-            subpos = np.array(subpos)
+            subpos = np.array(subpos)  # Comoving Distance
             subMvir = np.asarray(subMvir)
             subM200b = np.asarray(subM200b)
             subvmax = np.asarray(subvmax)
@@ -103,7 +103,7 @@ class Lightcone():
             boxlength = np.max(subpos[:, 0]) - np.min(subpos[:, 0])
             sub_id = self.subhalo_selection(subpos, subMvir, subvrms, sub_e,
                                             sub_pa)
-            subprop_box = {'snapnum' : snapnum*np.ones(len(sub_id[0])),
+            prop_box = {'snapnum' : snapnum*np.ones(len(sub_id[0])),
                            'ID' : subID[sub_id][0],
                            'pos' : subpos[sub_id, :][0],
                            'pos_b' : subpos[sub_id, :][0],
@@ -116,7 +116,7 @@ class Lightcone():
                            'rvmax_b' : subrvmax[sub_id][0],
                            'ellipse_b' : sub_e[sub_id][0],
                            'pa_b' : sub_pa[sub_id][0]}
-            self.subprop = subprop_box
+            self.prop= prop_box
         elif halo_finder == 'AHF':
             pass
 
@@ -129,6 +129,132 @@ class Lightcone():
         sub_id = np.array(sub_id1)
         return sub_id
 
+
+    def update_lc(self, indx, lc, box):
+        if lc == None:
+            lc = {'snapnum_box' : box['snapnum'][indx],
+            'ID_box' : box['ID'][indx],
+            'pos_box' : box['pos'][indx],
+            'pos_lc' : box['pos_b'][indx], 
+            'Mvir_lc' : box['Mvir_b'][indx], 
+            'M200b_lc' : box['M200b_b'][indx], 
+            'velmax_lc' : box['velmax_b'][indx],
+            'veldisp_lc' : box['veldisp_b'][indx],
+            'rvir_lc' : box['rvir_b'][indx],
+            'rs_lc' : box['rs_b'][indx],
+            'rvmax_lc' : box['rvmax_b'][indx],
+            'ellipse_lc' : box['ellipse_b'][indx],
+            'pa_lc' : box['pa_b'][indx]}
+        else:
+            lc['snapnum_box'] = np.concatenate((lc['snapnum_box'],
+                                        box['snapnum'][indx]),
+                                        axis=0)
+            lc['ID_box'] = np.concatenate((lc['ID_box'],
+                                        box['ID'][indx]),
+                                        axis=0)
+            lc['pos_box'] = np.concatenate((lc['pos_box'],
+                                            box['pos'][indx]),
+                                            axis=0)
+            lc['pos_lc'] = np.concatenate((lc['pos_lc'],
+                                            box['pos_b'][indx]),
+                                            axis=0)
+            lc['Mvir_lc'] = np.concatenate((lc['Mvir_lc'],
+                                            box['Mvir_b'][indx]),
+                                            axis=0)
+            lc['M200b_lc'] = np.concatenate((lc['M200b_lc'],
+                                            box['M200b_b'][indx]),
+                                            axis=0)
+            lc['velmax_lc'] = np.concatenate((lc['velmax_lc'],
+                                            box['velmax_b'][indx]),
+                                            axis=0)
+            lc['veldisp_lc'] = np.concatenate((lc['veldisp_lc'],
+                                            box['veldisp_b'][indx]),
+                                            axis=0)
+            lc['rvir_lc'] = np.concatenate((lc['rvir_lc'],
+                                            box['rvir_b'][indx]),
+                                            axis=0)
+            lc['rs_lc'] = np.concatenate((lc['rs_lc'],
+                                            box['rs_b'][indx]),
+                                            axis=0)
+            lc['rvmax_lc'] = np.concatenate((lc['rvmax_lc'],
+                                        box['rvmax_b'][indx]),
+                                        axis=0)
+            lc['ellipse_lc'] = np.concatenate((lc['ellipse_lc'],
+                                        box['ellipse_b'][indx]),
+                                        axis=0)
+            lc['pa_lc'] = np.concatenate((lc['pa_lc'],
+                                            box['pa_b'][indx]),
+                                            axis=0)
+            #del subprop['snapnum'], ['ID']
+            #del subprop['pos'], subprop['pos_b'], subprop['Mvir_b'], subprop['M200b_b']
+            #del subprop['velmax_b'], subprop['veldisp_b'], subprop['rvir_b']
+            #del subprop['rs_b'], subprop['ellipse_b'], subprop['pa_b']
+            print('LC length: ', np.max(lc['pos_lc'][:, 0]))
+        return lc
+
+
+    """
+    def update_lc(self, indx, lc):
+        if lc == None:
+            lc = {'snapnum_box' : self.prop['snapnum'][indx],
+                       'ID_box' : self.prop['ID'][indx],
+                       'pos_box' : self.prop['pos'][indx],
+                       'pos_lc' : self.prop['pos_b'][indx], 
+                       'Mvir_lc' : self.prop['Mvir_b'][indx], 
+                       'M200b_lc' : self.prop['M200b_b'][indx], 
+                       'velmax_lc' : self.prop['velmax_b'][indx],
+                       'veldisp_lc' : self.prop['veldisp_b'][indx],
+                       'rvir_lc' : self.prop['rvir_b'][indx],
+                       'rs_lc' : self.prop['rs_b'][indx],
+                       'rvmax_lc' : self.prop['rvmax_b'][indx],
+                       'ellipse_lc' : self.prop['ellipse_b'][indx],
+                       'pa_lc' : self.prop['pa_b'][indx]}
+        else:
+            lc['snapnum_box'] = np.concatenate((lc['snapnum_box'],
+                                                self.prop['snapnum'][indx]),
+                                                     axis=0)
+            lc['ID_box'] = np.concatenate((lc['ID_box'],
+                                           self.prop['ID'][indx]),
+                                                axis=0)
+            lc['pos_box'] = np.concatenate((lc['pos_box'],
+                                            self.prop['pos'][indx]),
+                                                axis=0)
+            lc['pos_lc'] = np.concatenate((lc['pos_lc'],
+                                           self.prop['pos_b'][indx]),
+                                                axis=0)
+            lc['Mvir_lc'] = np.concatenate((lc['Mvir_lc'],
+                                            self.prop['Mvir_b'][indx]),
+                                                 axis=0)
+            lc['M200b_lc'] = np.concatenate((lc['M200b_lc'],
+                                             self.prop['M200b_b'][indx]),
+                                                 axis=0)
+            lc['velmax_lc'] = np.concatenate((lc['velmax_lc'],
+                                              self.prop['velmax_b'][indx]),
+                                                    axis=0)
+            lc['veldisp_lc'] = np.concatenate((lc['veldisp_lc'],
+                                               self.prop['veldisp_b'][indx]),
+                                                    axis=0)
+            lc['rvir_lc'] = np.concatenate((lc['rvir_lc'],
+                                            self.prop['rvir_b'][indx]),
+                                                 axis=0)
+            lc['rs_lc'] = np.concatenate((lc['rs_lc'],
+                                          self.prop['rs_b'][indx]),
+                                               axis=0)
+            lc['rvmax_lc'] = np.concatenate((lc['rvmax_lc'],
+                                             self.prop['rvmax_b'][indx]),
+                                                  axis=0)
+            lc['ellipse_lc'] = np.concatenate((lc['ellipse_lc'],
+                                               self.prop['ellipse_b'][indx]),
+                                                    axis=0)
+            lc['pa_lc'] = np.concatenate((lc['pa_lc'],
+                                          self.prop['pa_b'][indx]),
+                                          axis=0)
+            #del prop['snapnum'], ['ID']
+            #del prop['pos'], prop['pos_b'], prop['Mvir_b'], prop['M200b_b']
+            #del prop['velmax_b'], prop['veldisp_b'], prop['rvir_b']
+            #del prop['rs_b'], prop['ellipse_b'], prop['pa_b']
+        return lc
+    """
 
     def find_subhalos_in_lc(self, lc, subpos, alpha):
         """
@@ -145,68 +271,6 @@ class Lightcone():
         return sub_id
 
 
-    def update_lc(self, indx, lc, box):
-        if lc == None:
-            lc = {'snapnum_box' : box['snapnum'][indx],
-                       'ID_box' : box['ID'][indx],
-                       'pos_box' : box['pos'][indx],
-                       'pos_lc' : box['pos_b'][indx], 
-                       'Mvir_lc' : box['Mvir_b'][indx], 
-                       'M200b_lc' : box['M200b_b'][indx], 
-                       'velmax_lc' : box['velmax_b'][indx],
-                       'veldisp_lc' : box['veldisp_b'][indx],
-                       'rvir_lc' : box['rvir_b'][indx],
-                       'rs_lc' : box['rs_b'][indx],
-                       'rvmax_lc' : box['rvmax_b'][indx],
-                       'ellipse_lc' : box['ellipse_b'][indx],
-                       'pa_lc' : box['pa_b'][indx]}
-        else:
-            lc['snapnum_box'] = np.concatenate((lc['snapnum_box'],
-                                                box['snapnum'][indx]),
-                                                     axis=0)
-            lc['ID_box'] = np.concatenate((lc['ID_box'],
-                                           box['ID'][indx]),
-                                                axis=0)
-            lc['pos_box'] = np.concatenate((lc['pos_box'],
-                                            box['pos'][indx]),
-                                                axis=0)
-            lc['pos_lc'] = np.concatenate((lc['pos_lc'],
-                                           box['pos_b'][indx]),
-                                                axis=0)
-            lc['Mvir_lc'] = np.concatenate((lc['Mvir_lc'],
-                                            box['Mvir_b'][indx]),
-                                                 axis=0)
-            lc['M200b_lc'] = np.concatenate((lc['M200b_lc'],
-                                             box['M200b_b'][indx]),
-                                                 axis=0)
-            lc['velmax_lc'] = np.concatenate((lc['velmax_lc'],
-                                              box['velmax_b'][indx]),
-                                                    axis=0)
-            lc['veldisp_lc'] = np.concatenate((lc['veldisp_lc'],
-                                               box['veldisp_b'][indx]),
-                                                    axis=0)
-            lc['rvir_lc'] = np.concatenate((lc['rvir_lc'],
-                                            box['rvir_b'][indx]),
-                                                 axis=0)
-            lc['rs_lc'] = np.concatenate((lc['rs_lc'],
-                                          box['rs_b'][indx]),
-                                               axis=0)
-            lc['rvmax_lc'] = np.concatenate((lc['rvmax_lc'],
-                                             box['rvmax_b'][indx]),
-                                                  axis=0)
-            lc['ellipse_lc'] = np.concatenate((lc['ellipse_lc'],
-                                               box['ellipse_b'][indx]),
-                                                    axis=0)
-            lc['pa_lc'] = np.concatenate((lc['pa_lc'],
-                                          box['pa_b'][indx]),
-                                          axis=0)
-            #del subprop['snapnum'], ['ID']
-            #del subprop['pos'], subprop['pos_b'], subprop['Mvir_b'], subprop['M200b_b']
-            #del subprop['velmax_b'], subprop['veldisp_b'], subprop['rvir_b']
-            #del subprop['rs_b'], subprop['ellipse_b'], subprop['pa_b']
-        return lc
-
-
     def fill_lightcone(self, lc, box, alpha):
         """
         Add new subhalos to Light-Cone
@@ -215,13 +279,18 @@ class Lightcone():
         if len(sub_id[0]) != 0:
             return self.update_lc(sub_id, lc, box)
         else:
+            print('No halos in Lightcone')
             return None
 
 
-    def find_sub_in_CoDi(self, subpos, comodist, direction):
+    def find_sub_in_CoDi(self, subpos, codi_1, codi_2, direction):
         """
         If simulation box is crossing comoving-distance/redshift threshold
         Input:
+            self:
+            subpos:
+            comodist:
+            direction:
         Output:
             sub_id: element indices
         """
@@ -229,9 +298,9 @@ class Lightcone():
                            subpos[:, 1]**2 + \
                            subpos[:, 2]**2)
         if direction == 0:
-            sub_id = np.where(sub_dist <= comodist)
+            sub_id = np.where((sub_dist <= codi_2) & (sub_dist >= codi_1))
         else:
-            sub_id = np.where(sub_dist > comodist)
+            sub_id = np.where(sub_dist > codi_2)
         return sub_id
 
     
@@ -243,10 +312,10 @@ class Lightcone():
         """
         Position Observer in simulated box at z=0
         """
-        boxlength = np.max(self.subprop['pos_b'][:, 0]) - \
-                    np.min(self.subprop['pos_b'][:, 0])
+        boxlength = np.max(self.prop['pos_b'][:, 0]) - \
+                    np.min(self.prop['pos_b'][:, 0])
         obserpos = np.ones(3)*boxlength/2
-        self.subprop['pos_b'][:, 0] -= obserpos[0]
-        self.subprop['pos_b'][:, 1] -= obserpos[1]
-        self.subprop['pos_b'][:, 2] -= obserpos[2]
-        self.subprop['pos_b'][:, 0] += translation_z
+        self.prop['pos_b'][:, 0] -= obserpos[0]
+        self.prop['pos_b'][:, 1] -= obserpos[1]
+        self.prop['pos_b'][:, 2] -= obserpos[2]
+        self.prop['pos_b'][:, 0] += translation_z
