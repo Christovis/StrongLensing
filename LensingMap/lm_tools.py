@@ -10,17 +10,20 @@ from scipy import ndimage
 from scipy.ndimage.filters import gaussian_filter
 from astropy import units as u
 from astropy import constants as const
-from astropy.cosmology import Planck15
+from astropy.cosmology import LambdaCDM
 import matplotlib.pyplot as plt
 import h5py
 # Requires: Python (2.7.13), NumPy (>= 1.8.2), SciPy (>= 0.13.3)
 import sklearn
 from sklearn.neighbors import KDTree
+import cfuncs as cf
 sys.path.insert(0, '..')
 import readsnap
+import multiprocessing as mp
 # surpress warnings from alpha_map_fourier
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, append=1)
+os.system("taskset -p 0xff %d" % os.getpid())
 
 ###############################################################################
 
@@ -41,17 +44,17 @@ def source_selection(src_id, src_z, src_pos, halo_id):
         zs[int] - redshift of source
     """
     src_indx = np.where(src_id == halo_id)[0]
-    #dist = np.sqrt(src_pos[src_indx, 1]**2 + src_pos[src_indx, 2]**2)
+    dist = np.sqrt(src_pos[src_indx, 1]**2 + src_pos[src_indx, 2]**2)
+    src_min = np.argsort(dist)
     #indx = np.argmin(dist)
-    indx = np.argmax(src_z[src_indx])
-    zs = src_z[src_indx[indx]]
-    return zs, indx
+    #indx = np.argmax(src_z[src_indx])
+    return src_z[src_indx[src_min[:4]]], src_id[src_indx[src_min[:4]]], src_pos[src_indx[src_min[:4]]]  # indx
 
 
-def sigma_crit(zLens, zSource):
-    Ds = Planck15.angular_diameter_distance(zSource)
-    Dl = Planck15.angular_diameter_distance(zLens)
-    Dls = Planck15.angular_diameter_distance_z1z2(zLens, zSource)
+def sigma_crit(zLens, zSource, cosmo):
+    Ds = cosmo.angular_diameter_distance(zSource)
+    Dl = cosmo.angular_diameter_distance(zLens)
+    Dls = cosmo.angular_diameter_distance_z1z2(zLens, zSource)
     sig_crit = (const.c**2/(4*np.pi*const.G))*Ds/(Dl*Dls)
     return sig_crit
 
@@ -300,7 +303,7 @@ def area(vs):
     return a
 
 
-def cal_lensing_signals():
+def cal_lensing_signals(kap, bzz, ncc):
     """
     Calculate Lensing Signals
     Input:
@@ -345,12 +348,13 @@ def devide_halos(halonum, cpunum):
     for x in range(cpunum):
         lenses_per_cpu.append(np.arange(i, lensnum_per_cpu[x]))
         i = lensnum_per_cpu[x]
+    logging.info('Lenses per CPU:', lensnum_per_cpu)
     return lenses_per_cpu
 
 
-def LensMap(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
+def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
             scale, Ncells, Nrays, Lrays, HQ_dir, sim, sim_phy, sim_name,
-            HaloPosBox):
+            HaloPosBox, cosmo):
     """
     Input:
         ll: halo array indexing
@@ -362,13 +366,15 @@ def LensMap(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
         snapnum
     Output:
     """
-
+    logging.info('Process %s started' % mp.current_process().name)
+    
     first_lens = lenses[0]
     previous_snapnum = snapnum[first_lens]
     # Run through lenses
-    for ll in range(len(lenses))[first_lens:]:
-        zs, Src_ID = source_selection(LC['Src_ID'], LC['Src_z'],
-                                      LC['SrcPosSky'], Halo_ID[ll])
+    for ll in range(lenses[0], lenses[-1]):
+        # select sources behind lense
+        zs, Src_ID, SrcPosSky = source_selection(LC['Src_ID'], LC['Src_z'],
+                                                 LC['SrcPosSky'], Halo_ID[ll])
         zl = Halo_z[ll]
         Lbox = Rvir[ll]*0.3*u.Mpc
         FOV = Lbox.to_value('Mpc')  #[Mpc]
@@ -419,76 +425,107 @@ def LensMap(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
         # point sources need to be smoothed by > 1 pixel to avoid artefacts
         tot_sigma = DM_sigma + Gas_sigma + Star_sigma
 
-        # Calculate critical surface density
-        sigma_cr = sigma_crit(zl, zs).to_value('Msun Mpc-2')
-        kappa = tot_sigma/sigma_cr
+        for ss in range(len(Src_ID)):
+            print(mp.current_process().name, Halo_ID[ll], ss)
+            # Calculate critical surface density
+            sigma_cr = sigma_crit(zl, zs[ss], cosmo).to_value('Msun Mpc-2')
+            kappa = tot_sigma/sigma_cr
 
-        # Calculate deflection angle
-        xi0 = 0.001  # Mpc
-        alphax, alphay, detA, xrays, yrays, lambda_t, lambda_r = alpha_from_kappa(
-                kappa, xs, ys, xi0, Nrays, Lrays.to_value('Mpc'))
-        xraysgrid, yraysgrid = np.meshgrid(xrays,yrays,indexing='ij')
-        # Mapping light rays from image plane to source plan
-        xrayssource, yrayssource = xraysgrid - alphax, yraysgrid - alphay
+            # Calculate deflection angle
+            xi0 = 0.001  # Mpc
+            alphax, alphay, detA, xrays, yrays, lambda_t, lambda_r = alpha_from_kappa(
+                    kappa, xs, ys, xi0, Nrays, Lrays.to_value('Mpc'))
+            xraysgrid, yraysgrid = np.meshgrid(xrays,yrays,indexing='ij')
+            # Mapping light rays from image plane to source plan
+            xrayssource, yrayssource = xraysgrid - alphax, yraysgrid - alphay
 
-        fig = plt.figure(figsize=(8,6))
-        ax = fig.add_subplot(111)
-        critical_curves = ax.contour(xraysgrid*xi0, yraysgrid*xi0, detA,
-                                    levels=(0,), colors='r',
-                                    linewidths=1.5, zorder=200)
-        Ncrit = len(critical_curves.allsegs[0])
-        crit_curves = critical_curves.allsegs[0]
-        tangential_critical_curves = ax.contour(xraysgrid*xi0, yraysgrid*xi0, lambda_t,
-                                               levels=(0,), colors='r',
-                                               linewidths=1.5, zorder=200)
-        Ncrit_tan = len(tangential_critical_curves.allsegs[0])
-        if Ncrit_tan > 0:
-           len_tan_crit = np.zeros(Ncrit_tan)
-           for i in range(Ncrit_tan):
-              len_tan_crit[i] = len(tangential_critical_curves.allsegs[0][i])
-           tangential_critical_curve = tangential_critical_curves.allsegs[0][len_tan_crit.argmax()]
-           eqv_einstein_radius = ((np.sqrt(np.abs(area(tangential_critical_curve))/ \
-                                           np.pi)*u.Mpc/Planck15.angular_diameter_distance(zl))*u.rad).to_value('arcsec')
-        else:
-           tangential_critical_curve = np.array([])
-           eqv_einstein_radius = 0
-        logging.info('Lens ID: %d, Einstein Radius: %f' % (Halo_ID[ll],
-                                                           eqv_einstein_radius))
+            fig = plt.figure(figsize=(8,6))
+            ax = fig.add_subplot(111)
+            critical_curves = ax.contour(xraysgrid*xi0, yraysgrid*xi0, detA,
+                                        levels=(0,), colors='r',
+                                        linewidths=1.5, zorder=200)
+            Ncrit = len(critical_curves.allsegs[0])
+            crit_curves = critical_curves.allsegs[0]
+            tangential_critical_curves = ax.contour(xraysgrid*xi0, yraysgrid*xi0,
+                                                    lambda_t, levels=(0,), colors='r',
+                                                    linewidths=1.5, zorder=200)
+            Ncrit_tan = len(tangential_critical_curves.allsegs[0])
+            if Ncrit_tan > 0:
+               len_tan_crit = np.zeros(Ncrit_tan)
+               for i in range(Ncrit_tan):
+                  len_tan_crit[i] = len(tangential_critical_curves.allsegs[0][i])
+               tangential_critical_curve = tangential_critical_curves.allsegs[0][len_tan_crit.argmax()]
+               eqv_einstein_radius = ((np.sqrt(np.abs(area(tangential_critical_curve))/ \
+                                               np.pi)*u.Mpc/cosmo.angular_diameter_distance(zl))*u.rad).to_value('arcsec')
+            else:
+               tangential_critical_curve = np.array([])
+               eqv_einstein_radius = 0
 
-        ########## Save to File ########
-        # xs, ys in Mpc in lens plane, kappa measured on that grid
-        # xrays, yrays, alphax, alphay in dimensionless coordinates
-        save_maps = True
-        if save_maps == True:
-            lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+'/'+sim_name[sim]+'/'
-            ensure_dir(lm_dir)
-            filename = lm_dir+'LM_L'+str(Halo_ID[ll])+'_S'+str(Src_ID)+'.h5'
-                
-            LensPlane = [xs, ys]
-            RaysPos = [xrays, yrays]
-            alpha = [alphax, alphay]
+            #converting box size and pixels size from co-moving distance to arcsec
+            FOV_arc = FOV/cf.Dc(zl)*cf.apr     #[arcsec] box size
+            dsx_arc = FOV_arc/Ncells           #[arcsec] pixel size
+            # initialize the coordinates of grids (light rays on lens plan)
+            lp1, lp2 = cf.make_r_coor(FOV_arc, Ncells)
+            ds = FOV_arc/Ncells  # grid-cell edge length
+            # Calculate the maps of deflection angles, magnifications,
+            # and lensing potential
+            kappa = gaussian_filter(kappa, sigma=3)
+            ai1, ai2, mua, phia = cal_lensing_signals(kappa, FOV_arc, Ncells)
+            # Mapping light rays from image plane to source plan
+            sp1=lp1-ai1; sp2=lp2-ai2  #[arcsec]
+        
+            # Source position [arcsec]
+            x = SrcPosSky[ss, 0]*u.Mpc
+            y = SrcPosSky[ss, 1]*u.Mpc
+            z = SrcPosSky[ss, 2]*u.Mpc
+            beta1 = ((y/x)*u.rad).to_value('arcsec')
+            beta2 = ((z/x)*u.rad).to_value('arcsec')
+            theta1, theta2 = cf.call_mapping_triangles([beta1, beta2], 
+                                                       lp1, lp2, sp1, sp2)
+            # calculate magnifications of lensed Supernovae
+            mu = cf.call_inverse_cic_single(mua, 0.0, 0.0, theta1, theta2, dsx_arc)
+            # calculate time delays of lensed Supernovae in Days
+            prts = cf.call_inverse_cic_single(phia,0.0,0.0,theta1,theta2,dsx_arc)
+            Kc = (1.0+zl)/cf.vc*(cf.Da(zl)*cf.Da(zs[ss])/cf.Da2(zl,zs[ss])) * \
+                  cf.Mpc_h/(1e3*cf.Day*cf.apr*cf.apr)
+            delta_t = Kc*(0.5*((theta1-beta1)**2.0+(theta2-beta2)**2.0)-prts)
+            logging.info('There are %d images', len(mu))
+            
+            ########## Save to File ########
+            # xs, ys in Mpc in lens plane, kappa measured on that grid
+            # xrays, yrays, alphax, alphay in dimensionless coordinates
+            if len(mu) > 1:
+                lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+'/'+sim_name[sim]+'/'
+                ensure_dir(lm_dir)
+                filename = lm_dir+'LM_L'+str(Halo_ID[ll])+'_S'+str(ss)+'.h5'
+                    
+                LensPlane = [xs, ys]
+                RaysPos = [xrays, yrays]
+                alpha = [alphax, alphay]
 
-            hf = h5py.File(filename, 'w')
-            hf.create_dataset('HaloPosBox', data=HaloPosBox)
-            hf.create_dataset('zs', data=zs)
-            hf.create_dataset('zl', data=zl)
-            hf.create_dataset('Grid', data=LensPlane)
-            hf.create_dataset('RaysPos', data=RaysPos)
-            hf.create_dataset('DM_sigma', data=DM_sigma)
-            hf.create_dataset('Gas_sigma', data=Gas_sigma)
-            hf.create_dataset('Star_sigma', data=Star_sigma)
-            hf.create_dataset('kappa', data=kappa)
-            hf.create_dataset('alpha', data=alpha)
-            hf.create_dataset('detA', data=detA)
-            hf.create_dataset('Ncrit', data=Ncrit)
-            try:
-                hf.create_dataset('crit_curves', data=crit_curves)
-            except:
-                cc = hf.create_group('crit_curve')
-                for k, v in enumerate(crit_curves):
-                    cc.create_dataset(str(k), data=v)
-            hf.create_dataset('tangential_critical_curves',
-                              data=tangential_critical_curve)
-            hf.create_dataset('eqv_einstein_radius', data=eqv_einstein_radius)
-            hf.close()
-        plt.close(fig)
+                hf = h5py.File(filename, 'w')
+                hf.create_dataset('delta_t', data=delta_t)
+                hf.create_dataset('mu', data=mu)
+                hf.create_dataset('HaloPosBox', data=HaloPosBox)
+                hf.create_dataset('zs', data=zs[ss])
+                hf.create_dataset('zl', data=zl)
+                hf.create_dataset('Grid', data=LensPlane)
+                hf.create_dataset('RaysPos', data=RaysPos)
+                hf.create_dataset('DM_sigma', data=DM_sigma)
+                hf.create_dataset('Gas_sigma', data=Gas_sigma)
+                hf.create_dataset('Star_sigma', data=Star_sigma)
+                hf.create_dataset('kappa', data=kappa)
+                hf.create_dataset('alpha', data=alpha)
+                hf.create_dataset('detA', data=detA)
+                hf.create_dataset('Ncrit', data=Ncrit)
+                try:
+                    hf.create_dataset('crit_curves', data=crit_curves)
+                except:
+                    cc = hf.create_group('crit_curve')
+                    for k, v in enumerate(crit_curves):
+                        cc.create_dataset(str(k), data=v)
+                hf.create_dataset('tangential_critical_curves',
+                                  data=tangential_critical_curve)
+                hf.create_dataset('eqv_einstein_radius', data=eqv_einstein_radius)
+                hf.close()
+            plt.close(fig)
