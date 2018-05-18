@@ -31,12 +31,13 @@ print("Number of CPUs: ", multiprocessing.cpu_count())
 LCSettings = '/cosma5/data/dp004/dc-beck3/shell_script/LCSettings.txt'
 sim_dir, sim_phy, sim_name, sim_col, dd, lc_dir, dd, HQ_dir = rf.Simulation_Specs(LCSettings)
 
-# One node has 16 cpus
+# Node = 16 CPUs
 CPUs = 6  # Number of CPUs to use
 
 ###########################################################################
 # Define Lensing Map Parameters
 # lensing map parameters
+xi0 = 0.001  #[Mpc], convert length scale
 Ncells = 1024  # devide density map into cells
 Lrays = 2.0*u.Mpc  # Length of, to calculate alpha from kappa
 Nrays = 1024  # Number of, to calculate alpha from kappa
@@ -60,7 +61,8 @@ if __name__ == '__main__':
         
         # Units of Simulation
         scale = rf.simulation_units(sim_dir[sim])
-
+        # scale = 1e-3
+        
         # Cosmological Parameters
         snap_tot_num = 45
         header = readsnap.snapshot_header(snapfile % (snap_tot_num, snap_tot_num))
@@ -91,8 +93,9 @@ if __name__ == '__main__':
         for cpu in range(CPUs)[1:]:
             Process(target=LI.generate_lens_map, name='Proc_%d'%cpu,
                     args=(lenses_per_cpu[cpu], LC, Halo_ID, Halo_z, Rvir,
-                          snapnum, snapfile, h, scale, Ncells, Nrays, Lrays,
-                          HQ_dir, sim, sim_phy, sim_name, HaloPosBox, cosmo)).start()
+                          snapnum, snapfile, h, scale, Ncells, Nrays,
+                          Lrays, HQ_dir, sim, sim_phy, sim_name,
+                          HaloPosBox, xi0, cosmo)).start()
         # Run Processes in parallel
         # Wait until every job is completed
         #for p in proc:
