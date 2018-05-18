@@ -181,8 +181,8 @@ def alpha_map(kappa, x, xi0, halo, version, identifier, save=True,
         alpha = data['alpha']
         xtest = data['xtest']
         xi0_load = data['xi0']  #[Mpc]
-        alpha *= xi0_load / xi0.to('Mpc').value
-        xtest *= xi0_load / xi0.to('Mpc').value
+        alpha *= xi0_load/xi0.to('Mpc').value
+        xtest *= xi0_load/xi0.to('Mpc').value
     else:
         print('Map does not exist. Calculating map...')
         dx, dy = x[1,0,0]-x[0,0,0], x[0,1,1]-x[0,0,1]
@@ -241,7 +241,7 @@ def alpha_from_kappa(kappa, xphys, yphys, xi0, Nrays, Lrays):
         Lrays: Lengt of, to calculate alpha from kappa
 
     Returns:
-        detA: 
+        detA:
     """
     # Dimensionless lens plane coordinates
     xs, ys = xphys/xi0, yphys/xi0
@@ -286,7 +286,9 @@ def alpha_from_kappa(kappa, xphys, yphys, xi0, Nrays, Lrays):
     lambda_r = 1 - ka + ga  # radial eigenvalue, page 115
 
     # alphax, alphay, xrays, yrays are all dimesnionless
-    return alphax, alphay, detA, xrays, yrays, lambda_t, lambda_r
+    alpha = [alphax, alphay]
+    rays = [xrays, yrays]
+    return alpha, detA, rays, lambda_t, lambda_r
 
 
 def area(vs):
@@ -307,9 +309,14 @@ def cal_lensing_signals(kap, bzz, ncc):
     """
     Calculate Lensing Signals
     Input:
-    kap: convergence map
-    bzz: box size, arcsec
-    ncc: number of pixels per side
+        kap: convergence map
+        bzz: box size, arcsec
+        ncc: number of pixels per side
+    
+    Output:
+        alpha1, alpha2: Deflection Map
+        mu: Magnification Map
+        phi: Lensing Potential
     """
     # deflection maps
     alpha1, alpha2 = cf.call_cal_alphas(kap, bzz, ncc)
@@ -352,9 +359,114 @@ def devide_halos(halonum, cpunum):
     return lenses_per_cpu
 
 
+def einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo):
+    """
+    Calculate Einstein Radius, tan- and critical curve,
+    map of deflection angles etc.
+
+    Input:
+        kappa: convergence map
+        xs, ys: Grid cell positions
+        zl: Redshift of Lens
+        xi0: convert length scale
+        Nrays: number of light rays
+        Lrays: length of light rays
+        cosmo: Cosmology
+
+    Output:
+        Rein_eqv: Einstein Radius [arcsec]
+        curve_crit_tan:
+        curve_crit:
+        detA:
+        alpha:
+        Ncrit:
+    """
+    # Calculate deflection angle
+    alpha, detA, rays, lambda_t, lambda_r = alpha_from_kappa(
+            kappa, xs, ys, xi0, Nrays, Lrays.to_value('Mpc'))
+    xraysgrid, yraysgrid = np.meshgrid(rays[0], rays[1], indexing='ij')
+
+    fig = plt.figure(figsize=(8,6))
+    ax = fig.add_subplot(111)
+    curve_crit= ax.contour(xraysgrid*xi0, yraysgrid*xi0, detA,
+                                 levels=(0,), colors='r',
+                                 linewidths=1.5, zorder=200)
+    Ncrit = len(curve_crit.allsegs[0])
+    crit_curves =curve_crit.allsegs[0]
+    curve_crit_tan= ax.contour(xraysgrid*xi0, yraysgrid*xi0,
+                               lambda_t, levels=(0,), colors='r',
+                               linewidths=1.5, zorder=200)
+    Ncrit_tan = len(curve_crit_tan.allsegs[0])
+    if Ncrit_tan > 0:
+       len_tan_crit = np.zeros(Ncrit_tan)
+       for i in range(Ncrit_tan):
+          len_tan_crit[i] = len(curve_crit_tan.allsegs[0][i])
+       curve_crit_tan = curve_crit_tan.allsegs[0][len_tan_crit.argmax()]
+       Rein_eqv = ((np.sqrt(np.abs(area(curve_crit_tan))/np.pi) * \
+                               u.Mpc/cosmo.angular_diameter_distance(zl)) * \
+                               u.rad).to_value('arcsec')
+    else:
+       curve_crit_tan= np.array([])
+       Rein_eqv = 0
+    plt.close(fig)
+    return rays, alpha, detA, Ncrit, curve_crit, curve_crit_tan, Rein_eqv
+
+
+def timedelay_magnification(FOV, Ncells, kappa, SrcPosSky, zs, zl, cosmo):
+    """
+    Calculate Photon-travel-time and Magnification of strong lensed
+    supernovae
+
+    Input:
+        FOV: Field-of-View [Mpc]
+        Ncells: number of cells for grid on FOV
+        kappa: convergence map
+        SrcPosSky: Position of Source relative to Lens [Mpc]
+        zs: Redshift of Source
+        zl: Redshift of Lens
+        cosmo: Cosmology
+
+    Output:
+        len(mu): number of multiple images of supernova
+        delta_t: Time it takes for photon to cover distance source-observer
+        mu: luminosity magnification of source
+    """
+
+    #converting box size and pixels size from co-moving distance to arcsec
+    FOV_arc = FOV/cf.Dc(zl, cosmo)*cf.apr     #[arcsec] box size
+    dsx_arc = FOV_arc/Ncells                  #[arcsec] pixel size
+    # initialize the coordinates of grids (light rays on lens plan)
+    lp1, lp2 = cf.make_r_coor(FOV_arc, Ncells)
+    ds = FOV_arc/Ncells  # grid-cell edge length
+    # Calculate the maps of deflection angles, magnifications,
+    # and lensing potential
+    kappa = gaussian_filter(kappa, sigma=3)
+    ai1, ai2, mua, phia = cal_lensing_signals(kappa, FOV_arc, Ncells)
+    # Mapping light rays from image plane to source plan
+    sp1=lp1-ai1; sp2=lp2-ai2  #[arcsec]
+
+    # Source position [arcsec]
+    x = SrcPosSky[0]*u.Mpc
+    y = SrcPosSky[1]*u.Mpc
+    z = SrcPosSky[2]*u.Mpc
+    beta1 = ((y/x)*u.rad).to_value('arcsec')
+    beta2 = ((z/x)*u.rad).to_value('arcsec')
+    theta1, theta2 = cf.call_mapping_triangles([beta1, beta2], 
+                                               lp1, lp2, sp1, sp2)
+    # calculate magnifications of lensed Supernovae
+    mu = cf.call_inverse_cic_single(mua, 0.0, 0.0, theta1, theta2, dsx_arc)
+    # calculate time delays of lensed Supernovae in Days
+    prts = cf.call_inverse_cic_single(phia,0.0,0.0,theta1,theta2,dsx_arc)
+    Kc = (1.0+zl)/cf.vc * \
+         (cf.Da(zl, cosmo)*cf.Da(zs, cosmo)/cf.Da2(zl, zs, cosmo)) * \
+         ((cf.Mpctometer*100/cosmo.H0)/(1e3*cf.Daytosec*cf.apr*cf.apr))
+    delta_t = Kc*(0.5*((theta1 - beta1)**2.0 + (theta2 - beta2)**2.0) - prts)
+    logging.info('There are %d images', len(mu))
+    return len(mu), delta_t, mu
+
 def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
             scale, Ncells, Nrays, Lrays, HQ_dir, sim, sim_phy, sim_name,
-            HaloPosBox, cosmo):
+            HaloPosBox, xi0, cosmo):
     """
     Input:
         ll: halo array indexing
@@ -372,16 +484,14 @@ def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
     previous_snapnum = snapnum[first_lens]
     # Run through lenses
     for ll in range(lenses[0], lenses[-1]):
-        # select sources behind lense
         zs, Src_ID, SrcPosSky = source_selection(LC['Src_ID'], LC['Src_z'],
                                                  LC['SrcPosSky'], Halo_ID[ll])
         zl = Halo_z[ll]
         Lbox = Rvir[ll]*0.3*u.Mpc
-        FOV = Lbox.to_value('Mpc')  #[Mpc]
+        FOV = Lbox.to_value('Mpc')
 
         # Only load new particle data if lens is at another snapshot
         if (previous_snapnum != snapnum[ll]) or (ll == first_lens):
-            print('Load Particle Data', snapnum[ll])
             snap = snapfile % (snapnum[ll], snapnum[ll])
             # 0 Gas, 1 DM, 4 Star[Star=+time & Wind=-time], 5 BH
             DM_pos = readsnap.read_block(snap, 'POS ', parttype=1)*scale
@@ -425,83 +535,27 @@ def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
         # point sources need to be smoothed by > 1 pixel to avoid artefacts
         tot_sigma = DM_sigma + Gas_sigma + Star_sigma
 
+        # Run through Sources
         for ss in range(len(Src_ID)):
             print(mp.current_process().name, Halo_ID[ll], ss)
             # Calculate critical surface density
             sigma_cr = sigma_crit(zl, zs[ss], cosmo).to_value('Msun Mpc-2')
             kappa = tot_sigma/sigma_cr
-
-            # Calculate deflection angle
-            xi0 = 0.001  # Mpc
-            alphax, alphay, detA, xrays, yrays, lambda_t, lambda_r = alpha_from_kappa(
-                    kappa, xs, ys, xi0, Nrays, Lrays.to_value('Mpc'))
-            xraysgrid, yraysgrid = np.meshgrid(xrays,yrays,indexing='ij')
-            # Mapping light rays from image plane to source plan
-            xrayssource, yrayssource = xraysgrid - alphax, yraysgrid - alphay
-
-            fig = plt.figure(figsize=(8,6))
-            ax = fig.add_subplot(111)
-            critical_curves = ax.contour(xraysgrid*xi0, yraysgrid*xi0, detA,
-                                        levels=(0,), colors='r',
-                                        linewidths=1.5, zorder=200)
-            Ncrit = len(critical_curves.allsegs[0])
-            crit_curves = critical_curves.allsegs[0]
-            tangential_critical_curves = ax.contour(xraysgrid*xi0, yraysgrid*xi0,
-                                                    lambda_t, levels=(0,), colors='r',
-                                                    linewidths=1.5, zorder=200)
-            Ncrit_tan = len(tangential_critical_curves.allsegs[0])
-            if Ncrit_tan > 0:
-               len_tan_crit = np.zeros(Ncrit_tan)
-               for i in range(Ncrit_tan):
-                  len_tan_crit[i] = len(tangential_critical_curves.allsegs[0][i])
-               tangential_critical_curve = tangential_critical_curves.allsegs[0][len_tan_crit.argmax()]
-               eqv_einstein_radius = ((np.sqrt(np.abs(area(tangential_critical_curve))/ \
-                                               np.pi)*u.Mpc/cosmo.angular_diameter_distance(zl))*u.rad).to_value('arcsec')
-            else:
-               tangential_critical_curve = np.array([])
-               eqv_einstein_radius = 0
-
-            #converting box size and pixels size from co-moving distance to arcsec
-            FOV_arc = FOV/cf.Dc(zl)*cf.apr     #[arcsec] box size
-            dsx_arc = FOV_arc/Ncells           #[arcsec] pixel size
-            # initialize the coordinates of grids (light rays on lens plan)
-            lp1, lp2 = cf.make_r_coor(FOV_arc, Ncells)
-            ds = FOV_arc/Ncells  # grid-cell edge length
-            # Calculate the maps of deflection angles, magnifications,
-            # and lensing potential
-            kappa = gaussian_filter(kappa, sigma=3)
-            ai1, ai2, mua, phia = cal_lensing_signals(kappa, FOV_arc, Ncells)
-            # Mapping light rays from image plane to source plan
-            sp1=lp1-ai1; sp2=lp2-ai2  #[arcsec]
-        
-            # Source position [arcsec]
-            x = SrcPosSky[ss, 0]*u.Mpc
-            y = SrcPosSky[ss, 1]*u.Mpc
-            z = SrcPosSky[ss, 2]*u.Mpc
-            beta1 = ((y/x)*u.rad).to_value('arcsec')
-            beta2 = ((z/x)*u.rad).to_value('arcsec')
-            theta1, theta2 = cf.call_mapping_triangles([beta1, beta2], 
-                                                       lp1, lp2, sp1, sp2)
-            # calculate magnifications of lensed Supernovae
-            mu = cf.call_inverse_cic_single(mua, 0.0, 0.0, theta1, theta2, dsx_arc)
-            # calculate time delays of lensed Supernovae in Days
-            prts = cf.call_inverse_cic_single(phia,0.0,0.0,theta1,theta2,dsx_arc)
-            Kc = (1.0+zl)/cf.vc*(cf.Da(zl)*cf.Da(zs[ss])/cf.Da2(zl,zs[ss])) * \
-                  cf.Mpc_h/(1e3*cf.Day*cf.apr*cf.apr)
-            delta_t = Kc*(0.5*((theta1-beta1)**2.0+(theta2-beta2)**2.0)-prts)
-            logging.info('There are %d images', len(mu))
+            rays, alpha, detA, Ncrit, Curve_crit, Curve_crit_tan, Rein = einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo)
+            n_imgs, delta_t, mu = timedelay_magnification(FOV, Ncells, kappa,
+                                                          SrcPosSky[ss], zs[ss],
+                                                          zl, cosmo)
             
             ########## Save to File ########
             # xs, ys in Mpc in lens plane, kappa measured on that grid
             # xrays, yrays, alphax, alphay in dimensionless coordinates
             if len(mu) > 1:
+                print('Einstein Radius: Halo', str(ll), Rein)
                 lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+'/'+sim_name[sim]+'/'
                 ensure_dir(lm_dir)
                 filename = lm_dir+'LM_L'+str(Halo_ID[ll])+'_S'+str(ss)+'.h5'
                     
                 LensPlane = [xs, ys]
-                RaysPos = [xrays, yrays]
-                alpha = [alphax, alphay]
 
                 hf = h5py.File(filename, 'w')
                 hf.create_dataset('delta_t', data=delta_t)
@@ -510,7 +564,7 @@ def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
                 hf.create_dataset('zs', data=zs[ss])
                 hf.create_dataset('zl', data=zl)
                 hf.create_dataset('Grid', data=LensPlane)
-                hf.create_dataset('RaysPos', data=RaysPos)
+                hf.create_dataset('RaysPos', data=rays)
                 hf.create_dataset('DM_sigma', data=DM_sigma)
                 hf.create_dataset('Gas_sigma', data=Gas_sigma)
                 hf.create_dataset('Star_sigma', data=Star_sigma)
@@ -519,13 +573,12 @@ def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
                 hf.create_dataset('detA', data=detA)
                 hf.create_dataset('Ncrit', data=Ncrit)
                 try:
-                    hf.create_dataset('crit_curves', data=crit_curves)
+                    hf.create_dataset('crit_curves', data=Curve_crit)
                 except:
                     cc = hf.create_group('crit_curve')
-                    for k, v in enumerate(crit_curves):
+                    for k, v in enumerate(Curve_crit):
                         cc.create_dataset(str(k), data=v)
                 hf.create_dataset('tangential_critical_curves',
-                                  data=tangential_critical_curve)
-                hf.create_dataset('eqv_einstein_radius', data=eqv_einstein_radius)
+                                  data=Curve_crit_tan)
+                hf.create_dataset('eqv_einstein_radius', data=Rein)
                 hf.close()
-            plt.close(fig)
