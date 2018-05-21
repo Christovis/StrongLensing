@@ -6,7 +6,7 @@ import numpy as np
 from astropy import units as u
 from astropy import constants as const
 from astropy.cosmology import z_at_value
-from astropy.cosmology import Planck15
+from astropy.cosmology import LambdaCDM
 from scipy.interpolate import interp1d
 import h5py
 import CosmoDist as cd
@@ -70,10 +70,9 @@ for sim in range(len(sim_dir)):
     # Cosmological Parameters
     snap_tot_num = 45
     header = readsnap.snapshot_header(snapfile % (snap_tot_num, snap_tot_num))
-    cosmo = {'omega_M_0' : header.omega_m,
-            'omega_lambda_0' : header.omega_l,
-            'omega_k_0' : 0.0,
-            'h' : header.hubble}
+    cosmo = LambdaCDM(H0=header.hubble*100,
+                      Om0=header.omega_m,
+                      Ode0=header.omega_l)
     #Redshift Steps; past to present
     z_sim = []
     for i in range( snap_tot_num, -1, -1):
@@ -87,7 +86,7 @@ for sim in range(len(sim_dir)):
     z_lcone = [0] + z_lcone
 
     # Comoving distance between snapshot redshifts
-    CoDi = Planck15.comoving_distance(z_lcone).to_value('Mpc')
+    CoDi = cosmo.comoving_distance(z_lcone).to_value('Mpc')
     # Interpolation fct. between comoving dist. and redshift
     reddistfunc = interp1d(CoDi, z_lcone, kind='cubic')
     CoDi = CoDi[1:]
@@ -135,6 +134,7 @@ for sim in range(len(sim_dir)):
                                'ID' : box.prop['ID'][sub_id],
                                'pos' : box.prop['pos'][sub_id],
                                'pos_b' : box.prop['pos_b'][sub_id],
+                               'vel_b' : box.prop['vel_b'][sub_id],
                                'Mvir_b' : box.prop['Mvir_b'][sub_id],
                                'M200b_b' : box.prop['M200b_b'][sub_id],
                                'velmax_b' : box.prop['velmax_b'][sub_id],
@@ -159,7 +159,7 @@ for sim in range(len(sim_dir)):
                                                                 snapshot-i, header,
                                                                 hf_name, LengthUnit)
                     # Add randomness
-                    prop_box['pos_b'] = LCR.rotation_s(prop_box['pos_b'])
+                    #prop_box['pos_b'] = LCR.rotation_s(prop_box['pos_b'])
                     prop_box['pos_b'] = prop.position_box(prop_box['pos_b'],
                                                           boxlength,
                                                           translation_z, 0)
@@ -169,6 +169,7 @@ for sim in range(len(sim_dir)):
                                   'ID' : box.prop['ID'][sub_id],
                                   'pos' : box.prop['pos'][sub_id],
                                   'pos_b' : box.prop['pos_b'][sub_id],
+                                  'vel_b' : box.prop['vel_b'][sub_id],
                                   'Mvir_b' : box.prop['Mvir_b'][sub_id],
                                   'M200b_b' : box.prop['M200b_b'][sub_id],
                                   'velmax_b' : box.prop['velmax_b'][sub_id],
@@ -192,6 +193,7 @@ for sim in range(len(sim_dir)):
                                           'ID' : box.prop['ID'][sub_id],
                                           'pos' : box.prop['pos'][sub_id],
                                           'pos_b' : box.prop['pos_b'][sub_id],
+                                          'vel_b' : box.prop['vel_b'][sub_id],
                                           'Mvir_b' : box.prop['Mvir_b'][sub_id],
                                           'M200b_b' : box.prop['M200b_b'][sub_id],
                                           'velmax_b' : box.prop['velmax_b'][sub_id],
@@ -211,8 +213,8 @@ for sim in range(len(sim_dir)):
                              hf_name, LengthUnit)
                     boxlength = box.boxlength(box.prop['pos_b'])
                     # Add randomness
-                    box.prop['pos_b'] = LCR.translation_s(box.prop['pos_b'], boxlength)
-                    box.prop['pos_b'] = LCR.rotation_s(box.prop['pos_b'])
+                    #box.prop['pos_b'] = LCR.translation_s(box.prop['pos_b'], boxlength)
+                    #box.prop['pos_b'] = LCR.rotation_s(box.prop['pos_b'])
                     box.position_box_init(translation_z)
                     sub_id = box.find_sub_in_CoDi(box.prop['pos_b'], CoDi[i],
                                                   CoDi[i+1], 0)
@@ -221,6 +223,7 @@ for sim in range(len(sim_dir)):
                                   'ID' : box.prop['ID'][sub_id],
                                   'pos' : box.prop['pos'][sub_id],
                                   'pos_b' : box.prop['pos_b'][sub_id],
+                                  'vel_b' : box.prop['vel_b'][sub_id],
                                   'Mvir_b' : box.prop['Mvir_b'][sub_id],
                                   'M200b_b' : box.prop['M200b_b'][sub_id],
                                   'velmax_b' : box.prop['velmax_b'][sub_id],
@@ -243,20 +246,21 @@ for sim in range(len(sim_dir)):
                        lc['pos_lc'][:, 1]**2 + \
                        lc['pos_lc'][:, 2]**2)
     redshift_lc = [reddistfunc(dist) for dist in sub_dist]
-    #redshift_lc = [z_at_value(Planck15.comoving_distance, dist*u.Mpc, zmax=1) for dist in sub_dist]
+    #redshift_lc = [z_at_value(cosmo.comoving_distance, dist*u.Mpc, zmax=1) for dist in sub_dist]
     #print('test 3', redshift_lc)
     #print(zs)
     # Write data to h5 file which can be read by LightCone_read.py
     # to analyse and plot
     outdir = '/cosma5/data/dp004/dc-beck3/LightCone/'
     hf = h5py.File(outdir+'XXX_'+sim_name[sim]+'.h5', 'w')
-    hf.create_dataset('Halo_ID', data=lc['ID_box'])
+    hf.create_dataset('Halo_ID', data=lc['ID_box'])  # Rockstar ID
     hf.create_dataset('snapnum', data=lc['snapnum_box'])
     hf.create_dataset('Halo_z', data=redshift_lc )
     hf.create_dataset('Mvir', data=lc['Mvir_lc'])  #[Msun/h]
     hf.create_dataset('M200b', data=lc['M200b_lc'])  #[Msun/h]
     hf.create_dataset('HaloPosBox', data=lc['pos_box'])  #[Mpc]
     hf.create_dataset('HaloPosLC', data=lc['pos_lc'])  #[Mpc]
+    hf.create_dataset('HaloVel', data=lc['vel_lc'])  #[Mpc]
     hf.create_dataset('Vmax', data=lc['velmax_lc'])  #[km/s]
     hf.create_dataset('Vrms', data=lc['veldisp_lc'])  #[km/s]
     hf.create_dataset('Rvir', data=lc['rvir_lc'])  #[kpc]

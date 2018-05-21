@@ -56,6 +56,7 @@ class Lightcone():
             data = data.readlines()
             subID = []
             subpos = []
+            subvel = []
             subMvir = []
             subM200b = []
             subvmax = []
@@ -71,6 +72,7 @@ class Lightcone():
                     pos = [float(coord)*1e-3 for coord in data[k].split()[9:12]]
                 else:
                     pos = [float(coord) for coord in data[k].split()[9:12]]
+                vel = [float(coord) for coord in data[k].split()[12:15]]
                 av = [float(major_ax) for major_ax in data[k].split()[30:33]]
                 #bv = [float(major_ax) for major_ax in data[k].split()[32:35]]
                 #cv = [float(major_ax) for major_ax in data[k].split()[35:38]]
@@ -83,6 +85,7 @@ class Lightcone():
                     subrs.append(float(data[k].split()[6]))
                     subrvmax.append(float(data[k].split()[7]))
                     subpos.append(pos)
+                    subvel.append(vel)
                     subM200b.append(float(data[k].split()[21]))
                     sub_s = float(data[k].split()[29])
                     sub_e.append(1. - sub_s)
@@ -91,6 +94,7 @@ class Lightcone():
                     iki += 1
             subID = np.array(subID)
             subpos = np.array(subpos)  # Comoving Distance
+            subvel = np.array(subvel)
             subMvir = np.asarray(subMvir)
             subM200b = np.asarray(subM200b)
             subvmax = np.asarray(subvmax)
@@ -104,18 +108,19 @@ class Lightcone():
             sub_id = self.subhalo_selection(subpos, subMvir, subvrms, sub_e,
                                             sub_pa)
             prop_box = {'snapnum' : snapnum*np.ones(len(sub_id[0])),
-                           'ID' : subID[sub_id][0],
-                           'pos' : subpos[sub_id, :][0],
-                           'pos_b' : subpos[sub_id, :][0],
-                           'Mvir_b' : subMvir[sub_id][0],
-                           'M200b_b' : subM200b[sub_id][0],
-                           'velmax_b' : subvmax[sub_id][0],
-                           'veldisp_b' : subvrms[sub_id][0],
-                           'rvir_b' : subRvir[sub_id][0],
-                           'rs_b' : subrs[sub_id][0],
-                           'rvmax_b' : subrvmax[sub_id][0],
-                           'ellipse_b' : sub_e[sub_id][0],
-                           'pa_b' : sub_pa[sub_id][0]}
+                        'ID' : subID[sub_id][0],
+                        'pos' : subpos[sub_id, :][0],
+                        'pos_b' : subpos[sub_id, :][0],
+                        'vel_b' : subvel[sub_id, :][0],
+                        'Mvir_b' : subMvir[sub_id][0],
+                        'M200b_b' : subM200b[sub_id][0],
+                        'velmax_b' : subvmax[sub_id][0],
+                        'veldisp_b' : subvrms[sub_id][0],
+                        'rvir_b' : subRvir[sub_id][0],
+                        'rs_b' : subrs[sub_id][0],
+                        'rvmax_b' : subrvmax[sub_id][0],
+                        'ellipse_b' : sub_e[sub_id][0],
+                        'pa_b' : sub_pa[sub_id][0]}
             self.prop= prop_box
         elif halo_finder == 'AHF':
             pass
@@ -136,6 +141,7 @@ class Lightcone():
             'ID_box' : box['ID'][indx],
             'pos_box' : box['pos'][indx],
             'pos_lc' : box['pos_b'][indx], 
+            'vel_lc' : box['vel_b'][indx], 
             'Mvir_lc' : box['Mvir_b'][indx], 
             'M200b_lc' : box['M200b_b'][indx], 
             'velmax_lc' : box['velmax_b'][indx],
@@ -158,6 +164,9 @@ class Lightcone():
             lc['pos_lc'] = np.concatenate((lc['pos_lc'],
                                             box['pos_b'][indx]),
                                             axis=0)
+            lc['vel_lc'] = np.concatenate((lc['vel_lc'],
+                                           box['vel_b'][indx]),
+                                           axis=0)
             lc['Mvir_lc'] = np.concatenate((lc['Mvir_lc'],
                                             box['Mvir_b'][indx]),
                                             axis=0)
