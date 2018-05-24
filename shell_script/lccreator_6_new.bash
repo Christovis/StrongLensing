@@ -1,18 +1,3 @@
-#!/bin/bash -l
-
-# SBATCH -L /bin/bash
-#SBATCH -N 1
-#SBATCH -t 6:00:00
-#SBATCH -J lensingmaps
-#SBATCH -o lensingmaps.out
-#SBATCH -e lensingmaps.err
-#SBATCH -p cosma6
-#SBATCH -A dp004
-#SBATCH --exclusive
-
-# Change to the directory where the job was submitted
-cd /cosma5/data/dp004/dc-beck3/shell_script/
-
 # Simulate Directory
 szproject=/cosma6/data/dp004/dc-arno1/SZ_project/
 # Directory to Codes Head-Quater
@@ -49,7 +34,7 @@ declare -a Simulations=('0 non_radiative_hydro/ L62_N512_GR red Mpc'
 						'0 non_radiative_hydro/ L62_N512_F6 green Mpc'
 						'1 full_physics/ L62_N512_GR_kpc red kpc'
 						'0 full_physics/ L62_N512_F5_kpc blue kpc' # not finished yet
-						'1 full_physics/ L62_N512_F6_kpc green kpc'
+						'0 full_physics/ L62_N512_F6_kpc green kpc'
 						'0 full_physics/ L62_N512_GR red Mpc'
 						'0 full_physics/ L62_N512_F5 blue Mpc'
 						'0 full_physics/ L62_N512_F6 green Mpc'
