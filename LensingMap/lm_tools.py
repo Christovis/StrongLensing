@@ -11,13 +11,15 @@ from scipy.ndimage.filters import gaussian_filter
 from astropy import units as u
 from astropy import constants as const
 from astropy.cosmology import LambdaCDM
+import matplotlib as mpl
+mpl.use('Agg')
 import matplotlib.pyplot as plt
 import h5py
 # Requires: Python (2.7.13), NumPy (>= 1.8.2), SciPy (>= 0.13.3)
 import sklearn
 from sklearn.neighbors import KDTree
 import cfuncs as cf
-sys.path.insert(0, '..')
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/')
 import readsnap
 import multiprocessing as mp
 # surpress warnings from alpha_map_fourier
@@ -48,7 +50,9 @@ def source_selection(src_id, src_z, src_pos, halo_id):
     src_min = np.argsort(dist)
     #indx = np.argmin(dist)
     #indx = np.argmax(src_z[src_indx])
-    return src_z[src_indx[src_min[:4]]], src_id[src_indx[src_min[:4]]], src_pos[src_indx[src_min[:4]]]  # indx
+    start = 0
+    end = 8
+    return src_z[src_indx[src_min[start:end]]], src_min[start:end], src_pos[src_indx[src_min[start:end]]]  # indx
 
 
 def sigma_crit(zLens, zSource, cosmo):
@@ -359,7 +363,7 @@ def devide_halos(halonum, cpunum):
     return lenses_per_cpu
 
 
-def einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo):
+def einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo, ax):
     """
     Calculate Einstein Radius, tan- and critical curve,
     map of deflection angles etc.
@@ -386,13 +390,11 @@ def einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo):
             kappa, xs, ys, xi0, Nrays, Lrays.to_value('Mpc'))
     xraysgrid, yraysgrid = np.meshgrid(rays[0], rays[1], indexing='ij')
 
-    fig = plt.figure(figsize=(8,6))
-    ax = fig.add_subplot(111)
     curve_crit= ax.contour(xraysgrid*xi0, yraysgrid*xi0, detA,
                                  levels=(0,), colors='r',
                                  linewidths=1.5, zorder=200)
     Ncrit = len(curve_crit.allsegs[0])
-    crit_curves =curve_crit.allsegs[0]
+    curve_crit = curve_crit.allsegs[0]
     curve_crit_tan= ax.contour(xraysgrid*xi0, yraysgrid*xi0,
                                lambda_t, levels=(0,), colors='r',
                                linewidths=1.5, zorder=200)
@@ -408,7 +410,6 @@ def einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo):
     else:
        curve_crit_tan= np.array([])
        Rein_eqv = 0
-    plt.close(fig)
     return rays, alpha, detA, Ncrit, curve_crit, curve_crit_tan, Rein_eqv
 
 
@@ -464,9 +465,9 @@ def timedelay_magnification(FOV, Ncells, kappa, SrcPosSky, zs, zl, cosmo):
     logging.info('There are %d images', len(mu))
     return len(mu), delta_t, mu
 
-def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
-            scale, Ncells, Nrays, Lrays, HQ_dir, sim, sim_phy, sim_name,
-            HaloPosBox, xi0, cosmo):
+def generate_lens_map(lenses, LC, Halo_Rockstar_ID, Halo_ID, Halo_z, Rvir,
+            snapnum, snapfile, h, scale, Ncells, Nrays, Lrays,
+            HQ_dir, sim, sim_phy, sim_name, HaloPosBox, xi0, HaloVel, cosmo):
     """
     Input:
         ll: halo array indexing
@@ -483,7 +484,7 @@ def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
     first_lens = lenses[0]
     previous_snapnum = snapnum[first_lens]
     # Run through lenses
-    for ll in range(lenses[0], lenses[-1]):
+    for ll in range(first_lens, lenses[-1]):
         zs, Src_ID, SrcPosSky = source_selection(LC['Src_ID'], LC['Src_z'],
                                                  LC['SrcPosSky'], Halo_ID[ll])
         zl = Halo_z[ll]
@@ -541,7 +542,9 @@ def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
             # Calculate critical surface density
             sigma_cr = sigma_crit(zl, zs[ss], cosmo).to_value('Msun Mpc-2')
             kappa = tot_sigma/sigma_cr
-            rays, alpha, detA, Ncrit, Curve_crit, Curve_crit_tan, Rein = einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo)
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            rays, alpha, detA, Ncrit, curve_crit, curve_crit_tan, Rein = einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo, ax)
             n_imgs, delta_t, mu = timedelay_magnification(FOV, Ncells, kappa,
                                                           SrcPosSky[ss], zs[ss],
                                                           zl, cosmo)
@@ -550,17 +553,20 @@ def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
             # xs, ys in Mpc in lens plane, kappa measured on that grid
             # xrays, yrays, alphax, alphay in dimensionless coordinates
             if len(mu) > 1:
-                print('Einstein Radius: Halo', str(ll), Rein)
                 lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+'/'+sim_name[sim]+'/'
                 ensure_dir(lm_dir)
-                filename = lm_dir+'LM_L'+str(Halo_ID[ll])+'_S'+str(ss)+'.h5'
+                filename = lm_dir+'LM_L'+str(Halo_ID[ll])+'_S'+str(Src_ID[ss])+'.h5'
                     
                 LensPlane = [xs, ys]
 
                 hf = h5py.File(filename, 'w')
+                hf.create_dataset('Halo_Rockstar_ID', data=Halo_Rockstar_ID[ll])
+                hf.create_dataset('Halo_ID', data=Halo_ID[ll])
+                hf.create_dataset('snapnum', data=snapnum[ll])
                 hf.create_dataset('delta_t', data=delta_t)
                 hf.create_dataset('mu', data=mu)
-                hf.create_dataset('HaloPosBox', data=HaloPosBox)
+                hf.create_dataset('HaloPosBox', data=HaloPosBox[ll])
+                hf.create_dataset('HaloVel', data=HaloVel[ll])
                 hf.create_dataset('zs', data=zs[ss])
                 hf.create_dataset('zl', data=zl)
                 hf.create_dataset('Grid', data=LensPlane)
@@ -573,12 +579,13 @@ def generate_lens_map(lenses, LC, Halo_ID, Halo_z, Rvir, snapnum, snapfile, h,
                 hf.create_dataset('detA', data=detA)
                 hf.create_dataset('Ncrit', data=Ncrit)
                 try:
-                    hf.create_dataset('crit_curves', data=Curve_crit)
+                    hf.create_dataset('crit_curves', data=curve_crit)
                 except:
                     cc = hf.create_group('crit_curve')
-                    for k, v in enumerate(Curve_crit):
+                    for k, v in enumerate(curve_crit):
                         cc.create_dataset(str(k), data=v)
                 hf.create_dataset('tangential_critical_curves',
-                                  data=Curve_crit_tan)
+                                  data=curve_crit_tan)
                 hf.create_dataset('eqv_einstein_radius', data=Rein)
                 hf.close()
+            plt.close(fig)
