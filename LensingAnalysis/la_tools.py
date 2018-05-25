@@ -1,32 +1,20 @@
 from __future__ import division
-import glob
 import re
+import sys
+import glob
 import os.path
 import logging
-import random as rnd
 import numpy as np
-from pylab import *
+import random as rnd
 import scipy.stats as stats
-import scipy.interpolate as interpolate
-from scipy import ndimage 
-from scipy.ndimage.filters import gaussian_filter
 from astropy import units as u
-from astropy import constants as const
-from astropy.constants import G
 from astropy.cosmology import LambdaCDM
 import matplotlib.pyplot as plt
 import h5py
-# Requires: Python (2.7.13), NumPy (>= 1.8.2), SciPy (>= 0.13.3)
-import sklearn
-from sklearn.neighbors import KDTree
 import cfuncs as cf
 sys.path.insert(0, '..')
 import readsnap
 import multiprocessing as mp
-# surpress warnings from alpha_map_fourier
-import warnings
-warnings.filterwarnings("ignore", category=RuntimeWarning, append=1)
-os.system("taskset -p 0xff %d" % os.getpid())
 
 ###############################################################################
 
@@ -36,10 +24,24 @@ def ensure_dir(f):
         os.makedirs(f)
 
 
+def define_sim_label(simname, simdir):
+    if 'GR' in simname:
+        cosmo = 'GR'
+    elif 'F5' in simname:
+        cosmo = 'F5'
+    elif 'F6'in simname:
+        cosmo = 'F6' 
+    if 'full_physics' in simdir:
+        phy = 'FP'
+    elif 'non_radiative_hydro' in simdir:
+        phy = 'NRH'
+    return phy+cosmo
+
+
 def check_in_sphere(c, pos, Rth):
     r = np.sqrt((c[0]-pos[:, 0])**2 + (c[1]-pos[:, 1])**2 + (c[2]-pos[:, 2])**2)
     indx = np.where(r < Rth)
-    return indx, r[indx]
+    return indx
 
 
 def velocity_dispersion(radius, part_vel, halo_vel):
@@ -57,9 +59,10 @@ def velocity_dispersion(radius, part_vel, halo_vel):
     # Calculate Velocity Dispersion
     sigma = [np.std(vlos[m]) for m in range(len(vlos))]
     sigma_median = np.median(sigma)
+    sigma_mean = np.mean(sigma)
     sigma_std = np.std(sigma)
     sigma_70perc = np.percentile(sigma, 70)
-    return sigma_std
+    return sigma_mean
 
 
 def devide_halos(halonum, cpunum):
@@ -83,6 +86,50 @@ def devide_halos(halonum, cpunum):
         i = lensnum_per_cpu[x]
     logging.info('Lenses per CPU:', lensnum_per_cpu)
     return lenses_per_cpu
+
+
+def lens_source_params(units, cpunum, lenses, LC, Halo_ID, scale, HQ_dir, sim,
+                       sim_phy, sim_name, xi0, cosmo, results_per_cpu):
+    """
+    Input:
+        ll: halo array indexing
+        LC: Light-cone dictionary
+        Halo_ID: ID of Halo
+        Halo_z: redshift of Halo
+        Rvir: virial radius in [Mpc]
+        previous_snapnum: 
+        snapnum
+    Output:
+    """
+    # LensMaps filenames
+    lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+sim_name[sim]+'/'
+    lm_files = [name for name in glob.glob(lm_dir+'LM_L*')]
+
+    first_lens = lenses[0]
+    previous_snapnum = snapnum[lenses[0]]
+    results = []
+    # Run through lenses
+    for ll in range(lenses[0], lenses[-1]):
+        lm_files_match = [e for e in lm_files if 'L%d'%(Halo_ID[ll]) in e]
+        if not lm_files_match:
+            continue
+
+        # Load Lens properties
+        indx = np.where(LC['Halo_ID'] == Halo_ID[ll])
+        measure = np.zeros(len(units))
+        for jj in units:
+            measure[jj] = LC[units[jj]][indx]
+        
+        measures.append(measure)
+
+    #for mm in range(len(measures)):
+    #    Halo_ID.append()
+    #    Src_ID.append()
+    if shape(measures):
+        unit_dict = {units : measures}
+    else:
+        unit_dict = {units : measures}
+    return unit_dict
 
 
 def sigma_crit(zLens, zSource, cosmo):
@@ -168,21 +215,13 @@ def dyn_vs_lensing_mass(cpunum, lenses, LC, Halo_ID, snapnum, snapfile, h, scale
         # Only load new particle data if lens is at another snapshot
         if (previous_snapnum != snapnum[ll]) or (ll == first_lens):
             snap = snapfile % (snapnum[ll], snapnum[ll])
-            # 0 Gas, 1 DM, 4 Star[Star=+time & Wind=-time], 5 BH DM_pos = readsnap.read_block(snap, 'POS ', parttype=1)*scale
-       #     DM_mass = readsnap.read_block(snap, 'MASS', parttype=1)*1e10/h
-       #     DM_vel = readsnap.read_block(snap, 'VEL ', parttype=1)
-       #     Gas_pos = readsnap.read_block(snap, 'POS ', parttype=0)*scale
-       #     Gas_mass = readsnap.read_block(snap, 'MASS', parttype=0)*1e10/h
+            # 0 Gas, 1 DM, 4 Star[Star=+time & Wind=-time], 5 BH
             Star_pos = readsnap.read_block(snap, 'POS ', parttype=4)*scale
             Star_age = readsnap.read_block(snap, 'AGE ', parttype=4)
-       #     Star_mass = readsnap.read_block(snap, 'MASS', parttype=4)
             Star_vel = readsnap.read_block(snap, 'VEL ', parttype=4)
             Star_pos = Star_pos[Star_age >= 0]
-       #     Star_mass = Star_mass[Star_age >= 0]*1e10/h
             Star_vel = Star_vel[Star_age >= 0]
             del Star_age
-        #    BH_pos = readsnap.read_block(snap, 'POS ', parttype=5)*scale
-        #    BH_mass = readsnap.read_block(snap, 'MASS', parttype=5)*1e10/h
         previous_snapnum = snapnum[ll]
         
         # Run through lensing maps
@@ -198,14 +237,10 @@ def dyn_vs_lensing_mass(cpunum, lenses, LC, Halo_ID, snapnum, snapfile, h, scale
             HaloPosBox = LM['HaloPosBox'][:]
             HaloVel = LM['HaloVel'][:]
 
-            #DM_indx, r = check_in_sphere(HaloPosBox, DM_pos, Rein.to_value('kpc'))
-            #Gas_indx, r = check_in_sphere(HaloPosBox, Gas_pos, Rein.to_value('kpc'))
-            Star_indx, r = check_in_sphere(HaloPosBox, Star_pos, Rein.to_value('kpc'))
-            #BH_indx, r = check_in_sphere(HaloPosBox, BH_pos, Rein.to_value('kpc'))
-
-            #Mlens = np.sum(DM_mass[DM_indx]) + np.sum(Gas_mass[Gas_indx]) + \
-            #        np.sum(Star_mass[Star_indx]) + np.sum(BH_mass[BH_indx])
-            Mlens = lensing_mass(Rein, zl, zs, cosmo)
-            Mdyn = dynamical_mass(Rein, Star_vel[Star_indx], HaloPosBox, HaloVel)
-            results.append([Halo_ID, Src_ID, Mdyn, Mlens])
+            Star_indx = check_in_sphere(HaloPosBox, Star_pos, Rein.to_value('kpc'))
+            if len(Star_indx[0]) > 100:
+                Mlens = lensing_mass(Rein, zl, zs, cosmo)
+                Mdyn = dynamical_mass(Rein, Star_vel[Star_indx], HaloPosBox, HaloVel)
+                results.append([Halo_ID[ll], Src_ID, Mdyn, Mlens])
+    #print('results for', mp.current_process().name, results)
     results_per_cpu[cpunum] = results
