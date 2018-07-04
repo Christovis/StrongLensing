@@ -9,9 +9,10 @@ from multiprocessing import Process
 from scipy.ndimage.filters import gaussian_filter
 from astropy import units as u
 from astropy.cosmology import LambdaCDM
+import pandas as pd
 import h5py
 import lm_tools as LI
-sys.path.insert(0, '..')
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/')
 import readsnap
 import readlensing as rf
 
@@ -29,7 +30,7 @@ print("Number of CPUs: ", multiprocessing.cpu_count())
 ############################################################################
 # Load Simulation Specifications
 LCSettings = '/cosma5/data/dp004/dc-beck3/shell_script/LCSettings.txt'
-sim_dir, sim_phy, sim_name, sim_col, dd, lc_dir, dd, HQ_dir = rf.Simulation_Specs(LCSettings)
+sim_dir, sim_phy, sim_name, sim_col, dd, hf_name, lc_dir, dd, HQ_dir = rf.Simulation_Specs(LCSettings)
 
 # Node = 16 CPUs
 CPUs = 6  # Number of CPUs to use
@@ -37,15 +38,12 @@ CPUs = 6  # Number of CPUs to use
 ###########################################################################
 # Define Lensing Map Parameters
 # lensing map parameters
-xi0 = 0.001  #[Mpc], convert length scale
 Ncells = 1024  # devide density map into cells
-Lrays = 2.0*u.Mpc  # Length of, to calculate alpha from kappa
-Nrays = 1024  # Number of, to calculate alpha from kappa
 save_maps = True
 
 ###########################################################################
-# protect the 'entry point' for Windows OS
 
+# protect the 'entry point' for Windows OS
 if __name__ == '__main__':
     # after importing numpy, reset the CPU affinity of the parent process so
     # that it will use all cores
@@ -53,15 +51,16 @@ if __name__ == '__main__':
 
     # Run through simulations
     for sim in range(len(sim_dir)):
+        print(sim_name[sim])
         #logging.info('Create lensing map for: %s', sim_name[sim])
         # File for lens & source properties
-        lc_file = lc_dir[sim]+'LC_SN_'+sim_name[sim]+'.h5'
+        lc_file = lc_dir[sim]+hf_name+'/LC_SN_'+sim_name[sim]+'_rndseed1.h5'
         # Simulation Snapshots
         snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
         
         # Units of Simulation
-        scale = rf.simulation_units(sim_dir[sim])
-        # scale = 1e-3
+        #scale = rf.simulation_units(sim_dir[sim])
+        scale = 1e-3
         
         # Cosmological Parameters
         snap_tot_num = 45
@@ -73,30 +72,50 @@ if __name__ == '__main__':
         a = 1/(1 + header.redshift)
 
         # Load LightCone Contents
-        LC = rf.LightCone_with_SN_lens(lc_file, 'dictionary')
-        Src_ID = LC['Src_ID']
-        Src_z = LC['Src_z']
+        LC = rf.LightCone_with_SN_lens(lc_file, hf_name)
 
         # Sort Lenses according to Snapshot Number (snapnum)
         indx = np.argsort(LC['snapnum'])
+        if hf_name == 'Subfind':
+            Halo_HF_ID= LC['Halo_Subfind_ID'][indx]
+            Rad = LC['Rhalfmass'][indx]
+        elif hf_name == 'Rockstar':
+            Halo_HF_ID= LC['Halo_Rockstar_ID'][indx]
+            Rad = LC['Rvir'][indx]
         Halo_ID= LC['Halo_ID'][indx]
         Halo_z = LC['Halo_z'][indx]
-        M200 = LC['M200'][indx]
-        Rvir = LC['Rvir'][indx]
         snapnum = LC['snapnum'][indx]
         HaloPosBox = LC['HaloPosBox'][indx]
+        HaloVel = LC['HaloVel'][indx]
 
         # Devide Halos over CPUs
-        lenses_per_cpu = LI.devide_halos(len(Halo_ID), CPUs)
+        lenses_per_cpu = LI.devide_halos(len(Halo_ID), CPUs, 'equal')
         # Prepatre Processes to be run in parallel
-        proc = []
-        for cpu in range(CPUs)[1:]:
-            Process(target=LI.generate_lens_map, name='Proc_%d'%cpu,
-                    args=(lenses_per_cpu[cpu], LC, Halo_ID, Halo_z, Rvir,
-                          snapnum, snapfile, h, scale, Ncells, Nrays,
-                          Lrays, HQ_dir, sim, sim_phy, sim_name,
-                          HaloPosBox, xi0, cosmo)).start()
+        jobs = []
+        manager = multiprocessing.Manager()
+        results_per_cpu = manager.dict()
+        
+        print('Total number of halos:', len(Halo_ID), lenses_per_cpu[-1][-1])
+        print('Halos per CPU: %s', [str(len(lpc)) for lpc in lenses_per_cpu])
+        #lenses_per_cpu = [lenses_per_cpu[cc][:30] for cc in range(CPUs)]
+        for cpu in range(CPUs):
+            p = Process(target=LI.generate_lens_map, name='Proc_%d'%cpu,
+                        args=(lenses_per_cpu[cpu], cpu, LC, Halo_HF_ID,
+                              Halo_ID, Halo_z, Rad, snapnum, snapfile,
+                              h, scale, Ncells, HQ_dir, sim, sim_phy, sim_name,
+                              HaloPosBox, HaloVel, cosmo, results_per_cpu))
+            jobs.append(p)
+            p.start()
+
+        ###############################
+        # New Multiprocessing
+        #pool = multiprocessing.Pool(processes=CPUs)
+        #pool.map(LI.generate_lens_map, [os.path.join(inDir, i) for i in lenses_per_cpu])
+        #pool.close()
+        #pool.join()
+
         # Run Processes in parallel
         # Wait until every job is completed
-        #for p in proc:
-        #    p.join()
+        print('started all jobs')
+        for p in jobs:
+            p.join()

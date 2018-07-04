@@ -8,13 +8,17 @@ import numpy as np
 import random as rnd
 import scipy.stats as stats
 from astropy import units as u
+from astropy import constants as const
 from astropy.cosmology import LambdaCDM
 import matplotlib.pyplot as plt
-import h5py
+#import h5py
+import pickle
 import cfuncs as cf
 sys.path.insert(0, '..')
 import readsnap
 import multiprocessing as mp
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/LensingMap/')
+import lm_tools
 
 ###############################################################################
 
@@ -89,7 +93,7 @@ def devide_halos(halonum, cpunum):
 
 
 def lens_source_params(units, cpunum, lenses, LC, Halo_ID, scale, HQ_dir, sim,
-                       sim_phy, sim_name, xi0, cosmo, results_per_cpu):
+                       sim_phy, sim_name, cosmo, results_per_cpu):
     """
     Input:
         ll: halo array indexing
@@ -174,12 +178,12 @@ def dynamical_mass(Rein, PartVel, HaloPosBox, HaloVel):
     sigma = velocity_dispersion(Rein.to_value('kpc'),
                                 PartVel, HaloVel)*(u.kilometer/u.second)
     # Virial Theorem
-    Mdyn = (sigma.to('m/s')**2*Rein.to('m')/G).to_value('M_sun')
+    Mdyn = (sigma.to('m/s')**2*Rein.to('m')/const.G.to('m3/(kg*s2)')).to_value('M_sun')
     return Mdyn
 
 
-def dyn_vs_lensing_mass(cpunum, lenses, LC, Halo_ID, snapnum, snapfile, h, scale,
-                        HQ_dir, sim, sim_phy, sim_name, xi0, cosmo, results_per_cpu):
+def dyn_vs_lensing_mass(cpunum, LC, lm_file, snapfile, h, scale, HQ_dir, sim,
+                        sim_phy, sim_name, cosmo, results_per_cpu):
     """
     Input:
         ll: halo array indexing
@@ -192,29 +196,23 @@ def dyn_vs_lensing_mass(cpunum, lenses, LC, Halo_ID, snapnum, snapfile, h, scale
     Output:
     """
     logging.info('Process %s started' % mp.current_process().name)
-   
-    # LensMaps filenames
-    lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+sim_name[sim]+'/'
-    lm_files = [name for name in glob.glob(lm_dir+'LM_L*')]
-
-    first_lens = lenses[0]
-    previous_snapnum = snapnum[lenses[0]]
+  
+    filed = open(lm_file, 'rb')
+    LM = pickle.load(filed)
     results = []
+    previous_snapnum = -1
     # Run through lenses
-    for ll in range(lenses[0], lenses[-1]):
-        lm_files_match = [e for e in lm_files if 'L%d'%(Halo_ID[ll]) in e]
-        if not lm_files_match:
-            continue
-        if 'Star_vel' not in locals():
-            first_lens = ll
-    
+    for ll in range(len(LM['Halo_ID'])):
         # Load Lens properties
-        indx = np.where(LC['Halo_ID'] == Halo_ID[ll])
-        HaloVel = LC['HaloVel'][indx]
-
+        HaloPosBox = LM['HaloPosBox'][ll]
+        HaloVel = LM['HaloVel'][ll]
+        snapnum = LM['snapnum'][ll]
+        zl = LM['zl'][ll]
+        
         # Only load new particle data if lens is at another snapshot
-        if (previous_snapnum != snapnum[ll]) or (ll == first_lens):
-            snap = snapfile % (snapnum[ll], snapnum[ll])
+        if (previous_snapnum != snapnum):
+            print('load new snapshot')
+            snap = snapfile % (snapnum, snapnum)
             # 0 Gas, 1 DM, 4 Star[Star=+time & Wind=-time], 5 BH
             Star_pos = readsnap.read_block(snap, 'POS ', parttype=4)*scale
             Star_age = readsnap.read_block(snap, 'AGE ', parttype=4)
@@ -222,25 +220,19 @@ def dyn_vs_lensing_mass(cpunum, lenses, LC, Halo_ID, snapnum, snapfile, h, scale
             Star_pos = Star_pos[Star_age >= 0]
             Star_vel = Star_vel[Star_age >= 0]
             del Star_age
-        previous_snapnum = snapnum[ll]
-        
-        # Run through lensing maps
-        for ii in range(len(lm_files_match)):
-            # Load LensingMap Contents
-            LM = h5py.File(lm_files_match[ii])
-            s = re.findall('[+-]?\d+', lm_files[ii])
-            Src_ID=int(s[-2])
-
-            Rein = LM['eqv_einstein_radius'].value*u.kpc
-            zl = LM['zl'].value
-            zs = LM['zs'].value
-            HaloPosBox = LM['HaloPosBox'][:]
-            HaloVel = LM['HaloVel'][:]
+        previous_snapnum = snapnum
+         
+        # Run through sources
+        for ss in range(len(LM['Sources']['Src_ID'][ll])):
+            zs = LM['Sources']['zs'][ll][ss]
+            Rein = LM['Sources']['Rein'][ll][ss]*u.kpc
+            # R_1/2_stellar_mass
 
             Star_indx = check_in_sphere(HaloPosBox, Star_pos, Rein.to_value('kpc'))
             if len(Star_indx[0]) > 100:
                 Mlens = lensing_mass(Rein, zl, zs, cosmo)
-                Mdyn = dynamical_mass(Rein, Star_vel[Star_indx], HaloPosBox, HaloVel)
-                results.append([Halo_ID[ll], Src_ID, Mdyn, Mlens])
+                Mdyn = dynamical_mass(Rein*5, Star_vel[Star_indx], HaloPosBox, HaloVel)
+                results.append([LM['Halo_ID'][ll], LM['Sources']['Src_ID'][ll][ss],
+                                Mdyn, Mlens])
     #print('results for', mp.current_process().name, results)
     results_per_cpu[cpunum] = results

@@ -1,7 +1,7 @@
 from __future__ import division
-import re
-import os.path
-import logging
+import time
+import collections, resource
+import re, os.path, logging
 import numpy as np
 from pylab import *
 import scipy.stats as stats
@@ -14,7 +14,7 @@ from astropy.cosmology import LambdaCDM
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
-import h5py
+import pickle
 # Requires: Python (2.7.13), NumPy (>= 1.8.2), SciPy (>= 0.13.3)
 import sklearn
 from sklearn.neighbors import KDTree
@@ -50,9 +50,12 @@ def source_selection(src_id, src_z, src_pos, halo_id):
     src_min = np.argsort(dist)
     #indx = np.argmin(dist)
     #indx = np.argmax(src_z[src_indx])
-    start = 0
+    start = 4
     end = 8
-    return src_z[src_indx[src_min[start:end]]], src_min[start:end], src_pos[src_indx[src_min[start:end]]]  # indx
+    if len(src_indx) > end:
+        return src_z[src_indx[src_min[start:end]]], src_min[start:end], src_pos[src_indx[src_min[start:end]]]  # indx
+    else:
+        return src_z[src_indx[src_min[:]]], src_min[:], src_pos[src_indx[src_min[:]]]
 
 
 def sigma_crit(zLens, zSource, cosmo):
@@ -62,7 +65,7 @@ def sigma_crit(zLens, zSource, cosmo):
     sig_crit = (const.c**2/(4*np.pi*const.G))*Ds/(Dl*Dls)
     return sig_crit
 
-
+#@nb.njit(fastmath=True)
 def adaptively_smoothed_maps(pos, h, mass=None, fov=2, bins=512,
 		centre=np.array([0, 0, 0]), smooth_fac=0.5):
 	"""
@@ -101,7 +104,7 @@ def adaptively_smoothed_maps(pos, h, mass=None, fov=2, bins=512,
 	return np.sum(sigmaS, axis=0), xedges, yedges
 
 
-def projected_surface_density(pos, mass, centre, fov=2, bins=512, smooth=True,
+def projected_surface_density(ll, pos, mass, centre, fov=2, bins=512, smooth=True,
                               smooth_fac=None, neighbour_no=None):
     """
     Fit ellipsoid to 3D distribution of points and return eigenvectors
@@ -126,10 +129,10 @@ def projected_surface_density(pos, mass, centre, fov=2, bins=512, smooth=True,
         x: 
         y:
     """
-    Lbox = fov
+    Lbox = fov  #[Mpc]
     Ncells = bins
 
-    ################ Shift particle coordinates to centre ################ 
+    ################ Shift particle coordinates to centre ################
     pos = pos - centre
     
     if smooth is True:
@@ -141,7 +144,7 @@ def projected_surface_density(pos, mass, centre, fov=2, bins=512, smooth=True,
             return
         ######################## DM 2D smoothed map #######################
         # Find all particles within 1.4xfov
-        # l.o.s. is along x-axes not z-axes !!!!!!!!!!!!!!!!!!!!!1
+        # actually l.o.s. is along x-axes not z-axes !
         X = pos[np.logical_and(np.abs(pos[:,0]) < 0.7*Lbox,
                                np.abs(pos[:,1]) < 0.7*Lbox)]
         M = mass[np.logical_and(np.abs(pos[:,0]) < 0.7*Lbox,
@@ -156,143 +159,19 @@ def projected_surface_density(pos, mass, centre, fov=2, bins=512, smooth=True,
                                                                  smooth_fac=smooth_fac)
     else:
         ####################### DM 2D histogram map #######################
+        lenindx = np.where((pos[:, 0] < 0.5*Lbox) & (-0.5*Lbox < pos[:, 0]) &
+                           (pos[:, 1] < 0.5*Lbox) & (-0.5*Lbox < pos[:, 1]))
         mass_in_cells, xedges, yedges = np.histogram2d(pos[:, 0], pos[:, 1],
                                                        bins=[Ncells, Ncells],
                                                        range=[[-0.5*Lbox, 0.5*Lbox],
                                                               [-0.5*Lbox, 0.5*Lbox]],
                                                        weights=mass)
     ###################### Projected surface density ######################
-    dx, dy = xedges[1]-xedges[0], yedges[1]-yedges[0]
-    Sigma = mass_in_cells/(dx*dy)
-    xs = 0.5*(xedges[1:]+xedges[:-1])
-    ys = 0.5*(yedges[1:]+yedges[:-1])
+    dx, dy = xedges[1]-xedges[0], yedges[1]-yedges[0]  #[Mpc]
+    Sigma = mass_in_cells/(dx*dy)  #[Msun/Mpc^2]
+    xs = 0.5*(xedges[1:]+xedges[:-1])  #[Mpc]
+    ys = 0.5*(yedges[1:]+yedges[:-1])  #[Mpc]
     return Sigma, xs, ys
-
-
-def alpha_calc(pos, kappa, x):
-    dx, dy = x[1,0,0]-x[0,0,0], x[0,1,1]-x[0,0,1]
-    alpha = np.sum(kappa[:, :, None]*(pos-x)/np.sum((pos-x)**2,axis=-1)[:, :, None], 
-            axis=(0,1))*dx*dy/np.pi
-    return alpha
-
-
-def alpha_map(kappa, x, xi0, halo, version, identifier, save=True,
-              overwrite=False, verbose=False):
-    mappath = 'data/strong_lensing/halo_'+str(halo).zfill(2)+'/'+version+'/'
-    mapname = identifier+'_alpha'
-    if os.path.isfile(mappath+mapname+'.npz') and overwrite==False:
-        data = np.load(mappath+mapname+'.npz')
-        alpha = data['alpha']
-        xtest = data['xtest']
-        xi0_load = data['xi0']  #[Mpc]
-        alpha *= xi0_load/xi0.to('Mpc').value
-        xtest *= xi0_load/xi0.to('Mpc').value
-    else:
-        print('Map does not exist. Calculating map...')
-        dx, dy = x[1,0,0]-x[0,0,0], x[0,1,1]-x[0,0,1]
-        xtest = x + np.array([dx*0.5,dy*0.5])
-        alpha = np.zeros(xtest.shape)
-        for i in np.arange(xtest.shape[0]):
-            if verbose:
-                print('Alpha map, line ' + str(i))
-            for j in np.arange(xtest.shape[1]):
-                alpha[i,j] = alpha_calc(xtest[i, j], kappa, x)
-        if save:
-            ensure_dir(mappath)
-            np.savez(mappath+mapname, alpha=alpha,
-                     xtest=xtest, xi0=xi0.to('Mpc').value)
-    return alpha, xtest
-
-
-def alpha_map_fourier(kappa, x, padFac):
-    xlen, ylen = kappa.shape
-    xpad, ypad = xlen*padFac, ylen*padFac
-    Lx = x[-1,0,0]-x[0,0,0]
-    Ly = x[0,-1,1]-x[0,0,1]
-    # round to power of 2 to speed up FFT
-    xpad = np.int(2**(np.ceil(np.log2(xpad))))
-    ypad = np.int(2**(np.ceil(np.log2(ypad))))
-    kappa_ft = np.fft.fft2(kappa,s=[xpad,ypad])
-    Lxpad, Lypad = Lx * xpad/xlen, Ly * ypad/ylen
-    # make a k-space grid
-    kxgrid, kygrid = np.meshgrid(np.fft.fftfreq(xpad),np.fft.fftfreq(ypad),indexing='ij')
-    kxgrid *= 2*np.pi*xpad/Lxpad
-    kygrid *= 2*np.pi*ypad/Lypad
-    alphaX_kfac = 2j * kxgrid / (kxgrid**2 + kygrid**2)
-    alphaY_kfac = 2j * kygrid / (kxgrid**2 + kygrid**2)
-    # [0,0] component mucked up by dividing by k^2
-    alphaX_kfac[0,0], alphaY_kfac[0,0] = 0,0
-    alphaX_ft = alphaX_kfac * kappa_ft
-    alphaY_ft = alphaY_kfac * kappa_ft
-    alphaX = np.fft.ifft2(alphaX_ft)[:xlen,:ylen]
-    alphaY = np.fft.ifft2(alphaY_ft)[:xlen,:ylen]
-    #gamma1 = np.real(gamma1)
-    #gamma2 = np.real(gamma2)
-    alpha = np.zeros(x.shape)
-    alpha[:,:,0], alpha[:,:,1] = alphaX, alphaY
-    return -alpha # worry aboutminus sign? Seems to make it work :-)
-
-
-def alpha_from_kappa(kappa, xphys, yphys, xi0, Nrays, Lrays):
-    """
-    Calculate deflection angle
-
-    Args:
-        kappa: 2D kappa map
-        xphys & yphys: edges of surface density grid
-        xi0: defines number of rays going through Lrays
-        Nrays: Number of, to calculate alpha from kappa
-        Lrays: Lengt of, to calculate alpha from kappa
-
-    Returns:
-        detA:
-    """
-    # Dimensionless lens plane coordinates
-    xs, ys = xphys/xi0, yphys/xi0
-    # Array of 2D dimensionless coordinates
-    xsgrid, ysgrid = np.meshgrid(xs, ys, indexing='ij')
-    x = np.zeros((len(xs), len(ys), 2))
-    x[:,:,0] = xsgrid
-    x[:,:,1] = ysgrid
-
-    alpha = alpha_map_fourier(kappa, x, padFac=4.0)
-    xtest = x
-
-    alphaxinterp = interpolate.RectBivariateSpline(xtest[:, 0, 0], xtest[0, :, 1],
-                                                   alpha[:, :, 0])
-    alphayinterp = interpolate.RectBivariateSpline(xtest[:, 0, 0], xtest[0, :, 1],
-                                                   alpha[:, :, 1])
-
-    xrays = np.linspace(-0.5*(Lrays/xi0), 0.5*(Lrays/xi0), Nrays)
-    yrays = np.linspace(-0.5*(Lrays/xi0), 0.5*(Lrays/xi0), Nrays)
-    xraysgrid, yraysgrid = np.meshgrid(xrays, yrays, indexing='ij')
-    dxray = xrays[1]-xrays[0]  # distance between rays
-    dyray = yrays[1]-yrays[0]
-
-    alphax = alphaxinterp(xrays,yrays)
-    alphay = alphayinterp(xrays,yrays)
-
-    #Jacobian Matrix, page32
-    A11 = 1 - np.gradient(alphax,dxray,axis=0)
-    A12 = - np.gradient(alphax,dyray,axis=1)
-    A21 = - np.gradient(alphay,dxray,axis=0)
-    A22 = 1 - np.gradient(alphay,dyray,axis=1)
-
-    detA = A11*A22 - A12*A21
-    mag = 1/detA  #magnification, page 101
-
-    ka = 1 - 0.5*(A11 + A22)  #kappa?
-    ga1 = 0.5*(A22 - A11)     #gamma1?
-    ga2 = -0.5*(A12 + A21)    #gamma2?
-    ga = (ga1**2 + ga2**2)**0.5
-
-    lambda_t = 1 - ka - ga  # tangential eigenvalue, page 115
-    lambda_r = 1 - ka + ga  # radial eigenvalue, page 115
-
-    # alphax, alphay, xrays, yrays are all dimesnionless
-    alpha = [alphax, alphay]
-    rays = [xrays, yrays]
-    return alpha, detA, rays, lambda_t, lambda_r
 
 
 def area(vs):
@@ -301,8 +180,8 @@ def area(vs):
     """
     a = 0
     x0, y0 = vs[0]
-    for [x1,y1] in vs[1:]:
-        dy = y1-y0
+    for [x1, y1] in vs[1:]:
+        dy = y1 - y0
         a += x0*dy
         x0 = x1
         y0 = y1
@@ -310,37 +189,36 @@ def area(vs):
 
 
 def cal_lensing_signals(kap, bzz, ncc):
-    """
-    Calculate Lensing Signals
-    Input:
-        kap: convergence map
-        bzz: box size, arcsec
-        ncc: number of pixels per side
-    
-    Output:
-        alpha1, alpha2: Deflection Map
-        mu: Magnification Map
-        phi: Lensing Potential
-    """
+    dsx_arc = bzz/ncc
     # deflection maps
     alpha1, alpha2 = cf.call_cal_alphas(kap, bzz, ncc)
+    
     # shear maps
     npad = 5
-    al11, al12, al21, al22 = cf.call_lanczos_derivative(alpha1, alpha2, bzz, ncc)
-    shear1 = 0.5*(al11-al22)
-    shear2 = 0.5*(al21+al12)
-    shear1[:npad, :]=0.0; shear1[-npad:,:]=0.0
-    shear1[:, :npad]=0.0; shear1[:,-npad:]=0.0;
-    shear2[:npad, :]=0.0; shear2[-npad:,:]=0.0
-    shear2[:, :npad]=0.0; shear2[:,-npad:]=0.0;
+    #al11, al12, al21, al22 = cf.call_lanczos_derivative(alpha1, alpha2, bzz, ncc)
+    al11 = 1 - np.gradient(alpha1, dsx_arc, axis=0)
+    al12 = - np.gradient(alpha1, dsx_arc, axis=1)
+    al21 = - np.gradient(alpha2, dsx_arc, axis=0)
+    al22 = 1 - np.gradient(alpha2, dsx_arc, axis=1)
+    detA = al11*al22 - al12*al21
+    
+    kappa0 = 1 - 0.5*(al11 + al22)
+    shear1 = 0.5*(al11 - al22)
+    shear2 = 0.5*(al21 + al12)
+    shear0 = (shear1**2 + shear2**2)**0.5
+    
     # magnification maps
-    mu = 1.0/((1.0-kap)**2.0 - shear1*shear1 - shear2*shear2)
+    mu = 1.0/((1.0-kap)**2.0-shear1*shear1-shear2*shear2)
+    
+    lambda_t = 1 - kappa0 - shear0  # tangential eigenvalue, page 115
+    
     # lensing potential
     phi = cf.call_cal_phi(kap, bzz, ncc)
-    return alpha1, alpha2, mu, phi
+
+    return alpha1, alpha2, mu, phi, detA, lambda_t
 
 
-def devide_halos(halonum, cpunum):
+def devide_halos(halonum, cpunum, distribution):
     """
     Input:
         halonum: number of halos acting as lense
@@ -348,72 +226,64 @@ def devide_halos(halonum, cpunum):
     Output:
         lenses_per_cpu: lens ID's for each cpu
     """
-    lensnum_per_cpu = np.ones(cpunum)*int(halonum/cpunum)
-    lensnum_per_cpu = [int(x) for x in lensnum_per_cpu]
-    missing_lenses = halonum - np.sum(lensnum_per_cpu)
-    for x in range(missing_lenses):
-        lensnum_per_cpu[x] += 1
-    lensnum_per_cpu = np.cumsum(lensnum_per_cpu)
-    lenses_per_cpu = []
-    i = 0
-    for x in range(cpunum):
-        lenses_per_cpu.append(np.arange(i, lensnum_per_cpu[x]))
-        i = lensnum_per_cpu[x]
-    logging.info('Lenses per CPU:', lensnum_per_cpu)
+    if distribution == 'equal':
+        lensnum_per_cpu = np.ones(cpunum)*int(halonum/cpunum)
+        lensnum_per_cpu = [int(x) for x in lensnum_per_cpu]
+        missing_lenses = halonum - np.sum(lensnum_per_cpu)
+        for x in range(missing_lenses):
+            lensnum_per_cpu[x] += 1
+        lensnum_per_cpu = np.cumsum(lensnum_per_cpu)
+        lenses_per_cpu = []
+        i = 0
+        for x in range(cpunum):
+            lenses_per_cpu.append(np.arange(i, lensnum_per_cpu[x]))
+            i = lensnum_per_cpu[x]
+    elif distribution == 'lin':
+        linfac = np.linspace(0.5, 1.5, cpunum)[::-1]
+        lensnum_per_cpu = np.ones(cpunum)*int(halonum/cpunum)
+        lensnum_per_cpu = [int(x*linfac[ii]) for ii, x in enumerate(lensnum_per_cpu)]
+        missing_lenses = halonum - np.sum(lensnum_per_cpu)
+        sbtrk_per_cpu = int(missing_lenses/cpunum)
+        lensnum_per_cpu = [int(x+sbtrk_per_cpu) for x in lensnum_per_cpu]
+        missing_lenses = halonum - np.sum(lensnum_per_cpu)
+        lensnum_per_cpu[0] = lensnum_per_cpu[0] + missing_lenses
+        lensnum_per_cpu = np.cumsum(lensnum_per_cpu)
+        lenses_per_cpu = []
+        i = 0
+        for x in range(cpunum):
+            lenses_per_cpu.append(np.arange(i, lensnum_per_cpu[x]))
+            i = lensnum_per_cpu[x]
     return lenses_per_cpu
 
 
-def einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo, ax):
-    """
-    Calculate Einstein Radius, tan- and critical curve,
-    map of deflection angles etc.
-
-    Input:
-        kappa: convergence map
-        xs, ys: Grid cell positions
-        zl: Redshift of Lens
-        xi0: convert length scale
-        Nrays: number of light rays
-        Lrays: length of light rays
-        cosmo: Cosmology
-
-    Output:
-        Rein_eqv: Einstein Radius [arcsec]
-        curve_crit_tan:
-        curve_crit:
-        detA:
-        alpha:
-        Ncrit:
-    """
-    # Calculate deflection angle
-    alpha, detA, rays, lambda_t, lambda_r = alpha_from_kappa(
-            kappa, xs, ys, xi0, Nrays, Lrays.to_value('Mpc'))
-    xraysgrid, yraysgrid = np.meshgrid(rays[0], rays[1], indexing='ij')
-
-    curve_crit= ax.contour(xraysgrid*xi0, yraysgrid*xi0, detA,
-                                 levels=(0,), colors='r',
-                                 linewidths=1.5, zorder=200)
+def einstein_radii(xs, ys, detA, lambda_t, zl, cosmo, ax, method):
+    curve_crit= ax.contour(xs, ys, detA,
+                           levels=(0,), colors='r',
+                           linewidths=1.5, zorder=200)
     Ncrit = len(curve_crit.allsegs[0])
     curve_crit = curve_crit.allsegs[0]
-    curve_crit_tan= ax.contour(xraysgrid*xi0, yraysgrid*xi0,
+    curve_crit_tan= ax.contour(xs, ys,
                                lambda_t, levels=(0,), colors='r',
                                linewidths=1.5, zorder=200)
     Ncrit_tan = len(curve_crit_tan.allsegs[0])
     if Ncrit_tan > 0:
-       len_tan_crit = np.zeros(Ncrit_tan)
-       for i in range(Ncrit_tan):
-          len_tan_crit[i] = len(curve_crit_tan.allsegs[0][i])
-       curve_crit_tan = curve_crit_tan.allsegs[0][len_tan_crit.argmax()]
-       Rein_eqv = ((np.sqrt(np.abs(area(curve_crit_tan))/np.pi) * \
-                               u.Mpc/cosmo.angular_diameter_distance(zl)) * \
-                               u.rad).to_value('arcsec')
+        len_tan_crit = np.zeros(Ncrit_tan)
+        for i in range(Ncrit_tan):
+            len_tan_crit[i] = len(curve_crit_tan.allsegs[0][i])
+        curve_crit_tan = curve_crit_tan.allsegs[0][len_tan_crit.argmax()]
+        if method == 'eqv':
+            Rein = np.sqrt(np.abs(area(curve_crit_tan))/np.pi)  #[arcsec]
+        if method == 'med':
+            dist = np.sqrt(curve_crit_tan[:, 0]**2 + curve_crit_tan[:, 1]**2)
+            Rein = np.median(dist)  #[arcsec]
     else:
-       curve_crit_tan= np.array([])
-       Rein_eqv = 0
-    return rays, alpha, detA, Ncrit, curve_crit, curve_crit_tan, Rein_eqv
+        curve_crit_tan= np.array([])
+        Rein = 0
+    return Ncrit, curve_crit, curve_crit_tan, Rein
 
 
-def timedelay_magnification(FOV, Ncells, kappa, SrcPosSky, zs, zl, cosmo):
+def timedelay_magnification(mu_map, phi_map, dsx_arc, Ncells, lp1, lp2,
+                            alpha1, alpha2, SrcPosSky, zs, zl, cosmo):
     """
     Calculate Photon-travel-time and Magnification of strong lensed
     supernovae
@@ -432,19 +302,8 @@ def timedelay_magnification(FOV, Ncells, kappa, SrcPosSky, zs, zl, cosmo):
         delta_t: Time it takes for photon to cover distance source-observer
         mu: luminosity magnification of source
     """
-
-    #converting box size and pixels size from co-moving distance to arcsec
-    FOV_arc = FOV/cf.Dc(zl, cosmo)*cf.apr     #[arcsec] box size
-    dsx_arc = FOV_arc/Ncells                  #[arcsec] pixel size
-    # initialize the coordinates of grids (light rays on lens plan)
-    lp1, lp2 = cf.make_r_coor(FOV_arc, Ncells)
-    ds = FOV_arc/Ncells  # grid-cell edge length
-    # Calculate the maps of deflection angles, magnifications,
-    # and lensing potential
-    kappa = gaussian_filter(kappa, sigma=3)
-    ai1, ai2, mua, phia = cal_lensing_signals(kappa, FOV_arc, Ncells)
     # Mapping light rays from image plane to source plan
-    sp1=lp1-ai1; sp2=lp2-ai2  #[arcsec]
+    [sp1, sp2] = [lp1 - alpha1, lp2 - alpha2]  #yi1,yi2[arcsec]
 
     # Source position [arcsec]
     x = SrcPosSky[0]*u.Mpc
@@ -455,19 +314,41 @@ def timedelay_magnification(FOV, Ncells, kappa, SrcPosSky, zs, zl, cosmo):
     theta1, theta2 = cf.call_mapping_triangles([beta1, beta2], 
                                                lp1, lp2, sp1, sp2)
     # calculate magnifications of lensed Supernovae
-    mu = cf.call_inverse_cic_single(mua, 0.0, 0.0, theta1, theta2, dsx_arc)
+    mu = cf.call_inverse_cic_single(mu_map, 0.0, 0.0, theta1, theta2, dsx_arc)
     # calculate time delays of lensed Supernovae in Days
-    prts = cf.call_inverse_cic_single(phia,0.0,0.0,theta1,theta2,dsx_arc)
-    Kc = (1.0+zl)/cf.vc * \
-         (cf.Da(zl, cosmo)*cf.Da(zs, cosmo)/cf.Da2(zl, zs, cosmo)) * \
-         ((cf.Mpctometer*100/cosmo.H0)/(1e3*cf.Daytosec*cf.apr*cf.apr))
-    delta_t = Kc*(0.5*((theta1 - beta1)**2.0 + (theta2 - beta2)**2.0) - prts)
-    logging.info('There are %d images', len(mu))
-    return len(mu), delta_t, mu
+    prts = cf.call_inverse_cic_single(phi_map, 0.0, 0.0, theta1, theta2, dsx_arc)
+    Kc = ((1.0+zl)/const.c.to('Mpc/s') * \
+          (cosmo.angular_diameter_distance(zl) * \
+           cosmo.angular_diameter_distance(zs) / \
+           (cosmo.angular_diameter_distance(zs) - \
+            cosmo.angular_diameter_distance(zl)))).to('sday').value
+    delta_t = Kc*(0.5*((theta1 - beta1)**2.0 + (theta2 - beta2)**2.0) - prts)/cf.apr**2
+    beta = [beta1, beta2]
+    theta = [theta1, theta2]
+    return len(mu), delta_t, mu, theta, beta
 
-def generate_lens_map(lenses, LC, Halo_Rockstar_ID, Halo_ID, Halo_z, Rvir,
-            snapnum, snapfile, h, scale, Ncells, Nrays, Lrays,
-            HQ_dir, sim, sim_phy, sim_name, HaloPosBox, xi0, HaloVel, cosmo):
+
+def plant_Tree():
+    """
+    Create Tree to store data hierarchical
+    """
+    return collections.defaultdict(plant_Tree)
+
+
+def lenslistinit():
+    global l_HFID, l_haloID, l_snapnum, l_deltat, l_mu, l_haloposbox, l_halovel, l_zs, l_zl, l_lensplane, l_detA, l_srctheta, l_srcbeta, l_srcID, l_tancritcurves, l_einsteinradius
+    l_HFID=[]; l_haloID=[]; l_snapnum=[]; l_deltat=[]; l_mu=[]; l_haloposbox=[]; l_halovel=[]; l_zs=[]; l_zl=[]; l_lensplane=[]; l_detA=[]; l_srctheta=[]; l_srcbeta=[]; l_srcID=[]; l_tancritcurves=[]; l_einsteinradius=[]
+    return l_HFID, l_haloID, l_snapnum, l_deltat, l_mu, l_haloposbox, l_halovel, l_zs, l_zl, l_lensplane, l_detA, l_srctheta, l_srcbeta, l_srcID, l_tancritcurves, l_einsteinradius
+
+def srclistinit():
+    global s_srcID, s_deltat, s_mu, s_zs, s_lensplane, s_kappa, s_alpha, s_detA, s_theta, s_beta, s_tancritcurves, s_einsteinradius
+    s_srcID=[]; s_deltat=[]; s_mu=[]; s_zs=[]; s_lensplane=[]; s_kappa=[]; s_alpha=[]; s_detA=[]; s_theta=[]; s_beta=[]; s_tancritcurves=[]; s_einsteinradius=[]
+    return s_srcID, s_deltat, s_mu, s_zs, s_lensplane, s_kappa, s_alpha, s_detA, s_theta, s_beta, s_tancritcurves, s_einsteinradius
+
+
+def generate_lens_map(lenses, cpunum, LC, Halo_HF_ID, Halo_ID, Halo_z, Rvir,
+                      snapnum, snapfile, h, scale, Ncells, HQ_dir, sim, sim_phy,
+                      sim_name, HaloPosBox, HaloVel, cosmo, results_per_cpu):
     """
     Input:
         ll: halo array indexing
@@ -479,10 +360,14 @@ def generate_lens_map(lenses, LC, Halo_Rockstar_ID, Halo_ID, Halo_z, Rvir,
         snapnum
     Output:
     """
-    logging.info('Process %s started' % mp.current_process().name)
-    
+    print('Process %s started' % mp.current_process().name)
     first_lens = lenses[0]
     previous_snapnum = snapnum[first_lens]
+    memtrack = 0
+
+    file = open('F6_test_'+str(mp.current_process().name)+'.txt','w') 
+
+    lenslistinit()
     # Run through lenses
     for ll in range(first_lens, lenses[-1]):
         zs, Src_ID, SrcPosSky = source_selection(LC['Src_ID'], LC['Src_z'],
@@ -490,16 +375,22 @@ def generate_lens_map(lenses, LC, Halo_Rockstar_ID, Halo_ID, Halo_z, Rvir,
         zl = Halo_z[ll]
         Lbox = Rvir[ll]*0.3*u.Mpc
         FOV = Lbox.to_value('Mpc')
+        # converting box size and pixels size from ang. diam. dist. to arcsec
+        FOV_arc = (FOV/cf.Da(zl, cosmo)*u.rad).to_value('arcsec')  #[arcsec] box size
+        dsx_arc = FOV_arc/Ncells                  #[arcsec] pixel size
+        # initialize the coordinates of grids (light rays on lens plan)
+        lp1, lp2 = cf.make_r_coor(FOV_arc, Ncells)  #[arcsec]
+
 
         # Only load new particle data if lens is at another snapshot
         if (previous_snapnum != snapnum[ll]) or (ll == first_lens):
             snap = snapfile % (snapnum[ll], snapnum[ll])
             # 0 Gas, 1 DM, 4 Star[Star=+time & Wind=-time], 5 BH
-            DM_pos = readsnap.read_block(snap, 'POS ', parttype=1)*scale
+            DM_pos = readsnap.read_block(snap, 'POS ', parttype=1)*scale  #[Mpc]
             DM_mass = readsnap.read_block(snap, 'MASS', parttype=1)*1e10/h
-            Gas_pos = readsnap.read_block(snap, 'POS ', parttype=0)*scale
+            Gas_pos = readsnap.read_block(snap, 'POS ', parttype=0)*scale  #[Mpc]
             Gas_mass = readsnap.read_block(snap, 'MASS', parttype=0)*1e10/h
-            Star_pos = readsnap.read_block(snap, 'POS ', parttype=4)*scale
+            Star_pos = readsnap.read_block(snap, 'POS ', parttype=4)*scale  #[Mpc]
             Star_age = readsnap.read_block(snap, 'AGE ', parttype=4)
             Star_mass = readsnap.read_block(snap, 'MASS', parttype=4)
             Star_pos = Star_pos[Star_age >= 0]
@@ -507,17 +398,19 @@ def generate_lens_map(lenses, LC, Halo_Rockstar_ID, Halo_ID, Halo_z, Rvir,
             del Star_age
             BH_pos = readsnap.read_block(snap, 'POS ', parttype=5)*scale
             BH_mass = readsnap.read_block(snap, 'MASS', parttype=5)*1e10/h
+            file.write(str(mp.current_process().name) + 'read particles \n')
         previous_snapnum = snapnum[ll]
         
-        DM_sigma, xs, ys = projected_surface_density(DM_pos,
+        DM_sigma, xs, ys = projected_surface_density(ll,
+                                                     DM_pos,   #[Mpc]
                                                      DM_mass,
                                                      HaloPosBox[ll],
-                                                     fov=FOV,
+                                                     fov=FOV,  #[Mpc]
                                                      bins=Ncells,
                                                      smooth=False,
                                                      smooth_fac=0.5,
                                                      neighbour_no=32)
-        Gas_sigma, xs, ys = projected_surface_density(Gas_pos, #*a/h,
+        Gas_sigma, xs, ys = projected_surface_density(ll, Gas_pos, #*a/h,
                                                       Gas_mass,
                                                       HaloPosBox[ll], #*a/h,
                                                       fov=FOV,
@@ -525,7 +418,7 @@ def generate_lens_map(lenses, LC, Halo_Rockstar_ID, Halo_ID, Halo_z, Rvir,
                                                       smooth=False,
                                                       smooth_fac=0.5,
                                                       neighbour_no=32)
-        Star_sigma, xs, ys = projected_surface_density(Star_pos, #*a/h,
+        Star_sigma, xs, ys = projected_surface_density(ll, Star_pos, #*a/h,
                                                        Star_mass,
                                                        HaloPosBox[ll], #*a/h,
                                                        fov=FOV,
@@ -533,59 +426,186 @@ def generate_lens_map(lenses, LC, Halo_Rockstar_ID, Halo_ID, Halo_z, Rvir,
                                                        smooth=False,
                                                        smooth_fac=0.5,
                                                        neighbour_no=8)
+        file.write(str(mp.current_process().name) + 'created surfce densities \n')
         # point sources need to be smoothed by > 1 pixel to avoid artefacts
         tot_sigma = DM_sigma + Gas_sigma + Star_sigma
 
+        srclistinit()
         # Run through Sources
+        check_for_sources = 0
         for ss in range(len(Src_ID)):
-            print(mp.current_process().name, Halo_ID[ll], ss)
             # Calculate critical surface density
             sigma_cr = sigma_crit(zl, zs[ss], cosmo).to_value('Msun Mpc-2')
             kappa = tot_sigma/sigma_cr
             fig = plt.figure()
             ax = fig.add_subplot(111)
-            rays, alpha, detA, Ncrit, curve_crit, curve_crit_tan, Rein = einstein_radii(kappa, xs, ys, zl, xi0, Nrays, Lrays, cosmo, ax)
-            n_imgs, delta_t, mu = timedelay_magnification(FOV, Ncells, kappa,
-                                                          SrcPosSky[ss], zs[ss],
-                                                          zl, cosmo)
-            
+            kappa = gaussian_filter(kappa, sigma=3)
+            # Calculate Deflection Maps
+            alpha1, alpha2, mu_map, phi, detA, lambda_t = cal_lensing_signals(kappa,
+                                                                              FOV_arc,
+                                                                              Ncells) 
+            file.write(str(ll)+'; '+str(ss)+'; '+str(mp.current_process().name) + ' lensing signals \n')
+            # Calculate Einstein Radii
+            Ncrit, curve_crit, curve_crit_tan, Rein = einstein_radii(lp1, lp2,
+                                                                     detA,
+                                                                     lambda_t,
+                                                                     zl, cosmo,
+                                                                     ax, 'med')
+            file.write(str(mp.current_process().name)+' Rein calc \n')
+            # Calculate Time-Delay and Magnification
+            n_imgs, delta_t, mu, theta, beta = timedelay_magnification(mu_map, phi,
+                                                                       dsx_arc,
+                                                                       Ncells, lp1, lp2,
+                                                                       alpha1, alpha2,
+                                                                       SrcPosSky[ss],
+                                                                       zs[ss],
+                                                                       zl, cosmo)
+            file.write(str(mp.current_process().name)+' time delay \n')
+            if n_imgs > 1:
+                file.write(str(mp.current_process().name)+' adding multi source --------------- \n')
+                print('%s, %s, %s' % (str(mp.current_process().name),
+                                      str(ll),
+                                      str(ss)))
+                # Tree Branch 2
+                s_srcID.append(Src_ID[ss])
+                print('-- zs[ss]', zs)
+                s_zs.append(zs[ss])
+                s_beta.append(beta)
+                #s_lensplane.append([lp1, lp2])
+                s_detA.append(detA)
+                s_tancritcurves.append(curve_crit_tan)
+                s_einsteinradius.append(Rein)
+                # Tree Branch 3
+                s_theta.append(theta)
+                s_deltat.append(delta_t)
+                s_mu.append(mu)
+                check_for_sources = 1
+        if check_for_sources == 1:
+            # Tree Branch 1
+            l_HFID.append(Halo_HF_ID[ll])
+            l_haloID.append(Halo_ID[ll])
+            l_snapnum.append(int(snapnum[ll]))
+            l_zl.append(Halo_z[ll])
+            l_haloposbox.append(HaloPosBox[ll])
+            l_halovel.append(HaloVel[ll])
+            # Tree Branch 2
+            l_srcID.append(s_srcID)
+            l_zs.append(s_zs)
+            l_srcbeta.append(s_beta)
+            #l_lensplane.append(s_lensplane)
+            l_detA.append(s_detA)
+            l_tancritcurves.append(s_tancritcurves)
+            l_einsteinradius.append(s_einsteinradius)
+            # Tree Branch 3
+            l_srctheta.append(s_theta)
+            l_deltat.append(s_deltat)
+            l_mu.append(s_mu)
+            #memuseout = (sys.getsizeof(l_HFID) + sys.getsizeof(l_haloID) + \
+            #         sys.getsizeof(l_snapnum) + sys.getsizeof(l_zl) + \
+            #         sys.getsizeof(l_haloposbox) + sys.getsizeof(l_halovel) + \
+            #         sys.getsizeof(l_srcID) + sys.getsizeof(l_zs) + \
+            #         sys.getsizeof(l_srcbeta) + sys.getsizeof(l_detA) + \
+            #         sys.getsizeof(l_tancritcurves) + sys.getsizeof(l_einsteinradius) + \
+            #         sys.getsizeof(l_srctheta) + sys.getsizeof(l_deltat) + \
+            #         sys.getsizeof(l_mu))/1024**3  #[GB]
+        memusetot = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024**3  #[GB]
+        print('::::::::::::: Tot. Memory Size [GB]: ', memusetot)
+        if memusetot > 5:
             ########## Save to File ########
-            # xs, ys in Mpc in lens plane, kappa measured on that grid
-            # xrays, yrays, alphax, alphay in dimensionless coordinates
-            if len(mu) > 1:
-                lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+'/'+sim_name[sim]+'/'
-                ensure_dir(lm_dir)
-                filename = lm_dir+'LM_L'+str(Halo_ID[ll])+'_S'+str(Src_ID[ss])+'.h5'
-                    
-                LensPlane = [xs, ys]
+            print('save file because it is too big')
+            tree = plant_Tree()
+            #tree = grow_Tree()
 
-                hf = h5py.File(filename, 'w')
-                hf.create_dataset('Halo_Rockstar_ID', data=Halo_Rockstar_ID[ll])
-                hf.create_dataset('Halo_ID', data=Halo_ID[ll])
-                hf.create_dataset('snapnum', data=snapnum[ll])
-                hf.create_dataset('delta_t', data=delta_t)
-                hf.create_dataset('mu', data=mu)
-                hf.create_dataset('HaloPosBox', data=HaloPosBox[ll])
-                hf.create_dataset('HaloVel', data=HaloVel[ll])
-                hf.create_dataset('zs', data=zs[ss])
-                hf.create_dataset('zl', data=zl)
-                hf.create_dataset('Grid', data=LensPlane)
-                hf.create_dataset('RaysPos', data=rays)
-                hf.create_dataset('DM_sigma', data=DM_sigma)
-                hf.create_dataset('Gas_sigma', data=Gas_sigma)
-                hf.create_dataset('Star_sigma', data=Star_sigma)
-                hf.create_dataset('kappa', data=kappa)
-                hf.create_dataset('alpha', data=alpha)
-                hf.create_dataset('detA', data=detA)
-                hf.create_dataset('Ncrit', data=Ncrit)
-                try:
-                    hf.create_dataset('crit_curves', data=curve_crit)
-                except:
-                    cc = hf.create_group('crit_curve')
-                    for k, v in enumerate(curve_crit):
-                        cc.create_dataset(str(k), data=v)
-                hf.create_dataset('tangential_critical_curves',
-                                  data=curve_crit_tan)
-                hf.create_dataset('eqv_einstein_radius', data=Rein)
-                hf.close()
+            # Tree Branches of Node 1 : Lenses
+            tree['Halo_ID'] = l_haloID
+            tree['HF_ID'] = l_HFID
+            tree['snapnum'] = l_snapnum
+            tree['zl'] = l_zl
+            tree['HaloPosBox'] = l_haloposbox
+            tree['HaloVel'] = l_halovel
+            for sid in range(len(l_haloID)):
+                # Tree Branches of Node 2 : Sources
+                tree['Sources']['Src_ID'][sid] = l_srcID[sid]
+                tree['Sources']['zs'][sid] = l_zs[sid]
+                tree['Sources']['beta'][sid] = l_srcbeta[sid]
+                #tree['Sources']['LP'][sid] = l_lensplane[sid]
+                tree['Sources']['detA'][sid] = l_detA[sid]
+                tree['Sources']['TCC'][sid] = l_tancritcurves[sid]
+                tree['Sources']['Rein'][sid] = l_einsteinradius[sid]
+                for imgs in range(len(l_srcID[sid])):
+                    # Tree Branches of Node 3 : Multiple Images
+                    tree['Sources']['theta'][sid][imgs] = l_srctheta[sid][imgs]
+                    tree['Sources']['delta_t'][sid][imgs] = l_deltat[sid][imgs]
+                    tree['Sources']['mu'][sid][imgs] = l_mu[sid][imgs]
+
+            lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+'/'+sim_name[sim]+'/'
+            ensure_dir(lm_dir)
+            filename = lm_dir+'LM_'+mp.current_process().name+'_' + \
+                       str(memtrack)+'.pickle'
+            filed = open(filename, 'wb')
+            pickle.dump(tree, filed)
+            filed.close()
             plt.close(fig)
+            memtrack += 1
+            lenslistinit()
+            srclistinit()
+
+    ########## Save to File ########
+    tree = plant_Tree()
+    #tree = grow_Tree()
+
+    # Tree Branches of Node 1 : Lenses
+    tree['Halo_ID'] = l_haloID
+    tree['HF_ID'] = l_HFID
+    tree['snapnum'] = l_snapnum
+    tree['zl'] = l_zl
+    tree['HaloPosBox'] = l_haloposbox
+    tree['HaloVel'] = l_halovel
+    for sid in range(len(l_haloID)):
+        # Tree Branches of Node 2 : Sources
+        tree['Sources']['Src_ID'][sid] = l_srcID[sid]
+        tree['Sources']['zs'][sid] = l_zs[sid]
+        tree['Sources']['beta'][sid] = l_srcbeta[sid]
+        #tree['Sources']['LP'][sid] = l_lensplane[sid]
+        tree['Sources']['detA'][sid] = l_detA[sid]
+        tree['Sources']['TCC'][sid] = l_tancritcurves[sid]
+        tree['Sources']['Rein'][sid] = l_einsteinradius[sid]
+        for imgs in range(len(l_srcID[sid])):
+            # Tree Branches of Node 3 : Multiple Images
+            tree['Sources']['theta'][sid][imgs] = l_srctheta[sid][imgs]
+            tree['Sources']['delta_t'][sid][imgs] = l_deltat[sid][imgs]
+            tree['Sources']['mu'][sid][imgs] = l_mu[sid][imgs]
+    file.close()
+    lm_dir = HQ_dir+'LensingMap/'+sim_phy[sim]+'/'+sim_name[sim]+'/'
+    ensure_dir(lm_dir)
+    filename = lm_dir+'LM_'+mp.current_process().name+'_' + \
+               str(memtrack)+'.pickle'
+    filed = open(filename, 'wb')
+    pickle.dump(tree, filed)
+    filed.close()
+    plt.close(fig)
+
+#                ### PLOT ###
+#                f, ax = plt.subplots()
+#                kappa_img = ax.imshow(np.log10(kappa).T,
+#                                      #extent=[Rein, Rein, Rein, Rein],
+#                                      extent=[lp1.min(), lp1.max(), lp2.min(), lp2.max()],
+#                                              #vmin=np.log10(0.18),
+#                                              #vmax=np.log10(5),
+#                                              cmap='jet_r',
+#                                              origin='lower')
+#                for  curve in curve_crit:
+#                    ax.plot(curve.T[0], curve.T[1], color='red', zorder=300)
+#                
+#                if len(curve_crit_tan)>0:
+#                    plt.plot(curve_crit_tan.T[0], curve_crit_tan.T[1],
+#                             color='black', lw=2.5, zorder=200)
+#                    circle1 = plt.Circle((0, 0), Rein,
+#                                         color='k', ls='--', fill=False)
+#                    ax.add_artist(circle1)
+#                        
+#                cbar = f.colorbar(kappa_img)
+#                cbar.set_label(r'$log(\kappa)$')
+#                plt.xlabel(r'$x \quad [arcsec/h]$')
+#                plt.ylabel(r'$y \quad [arcsec/h]$')
+#                f.savefig('LensMapTest_'+str(ss)+'_'+str(ll)+'.png', bbox_inches='tight')

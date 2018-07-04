@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import sys
+import sys, logging
 import numpy as np
 import random as rnd
 import astropy
@@ -12,16 +12,22 @@ import h5py
 import CosmoDist as cd
 #from Supernovae import SN_Type_Ia as SN
 import lc_supernovae as SN
-sys.path.insert(0, '..')
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/')
 import readsnap
 import readlensing as rf
 
+# Fixing random state for reproducibility
+rnd.seed(10)
+
+###############################################################################
+# Set up logging and parse arguments
+logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
+                    level=logging.DEBUG, datefmt='%H:%M:%S')
 
 ###############################################################################
 # Load Simulation Specifications
 LCSettings = '/cosma5/data/dp004/dc-beck3/shell_script/LCSettings.txt'
-sim_dir, sim_phy, sim_name, sim_col, hf_dir, lc_dir, glafic_dir, HQ_dir = rf.Simulation_Specs(LCSettings)
-
+sim_dir, sim_phy, sim_name, sim_col, hf_dir, hf_name, lc_dir, dd, HQ_dir = rf.Simulation_Specs(LCSettings)
 
 ###############################################################################
 # Define Supernova Distribution Parameters
@@ -29,32 +35,32 @@ c = const.c.to_value('km/s')
 # Region around Lense...
 # Time interval
 years = 1e5  # [yr]
-###############################################################################
 
+###############################################################################
 # Iterate through Simulations
 for sim in range(len(sim_dir)):
+    logging.info('Seed SNIa in Light-cone for: %s' % sim_name[sim])
     # LightCone file for lens properties
-    lc_file = lc_dir[sim]+'LC_'+sim_name[sim]+'.h5'
+    lc_file = lc_dir[sim]+hf_name+'/LC_'+sim_name[sim]+'1.h5'
     # Simulation Snapshots
-    snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d.0.hdf5'
+    snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
 
     # Cosmological Parameters
     snap_tot_num = 45  # read output_list_new.txt
-    header = readsnap.snapshot_header(snapfile % (snap_tot_num, snap_tot_num))
-    cosmo = LambdaCDM(H0=header.hubble*100,
-                      Om0=header.omega_m,
-                      Ode0=header.omega_l)
+    cosmo = LambdaCDM(H0=0.6774*100,
+                      Om0=0.3089,
+                      Ode0=0.6911)
     # Load LightCone Contents
-    LC = rf.LightCone_without_SN(lc_file, 'dictionary')
+    LC = rf.LightCone_without_SN(lc_file, hf_name)
     # Select Halos
-    LC = SN.select_halos(LC)
+    LC = SN.select_halos(LC, hf_name)
     print('Number of Halos: ', len(LC['M200']))
 
     # convert conformal time to redshift
-    cosmosim = {'omega_M_0' : header.omega_m,
-                'omega_lambda_0' : header.omega_l,
+    cosmosim = {'omega_M_0' : 0.3089,
+                'omega_lambda_0' : 0.6911,
                 'omega_k_0' : 0.0,
-                'h' : header.hubble}
+                'h' :0.6779}
     agefunc, redfunc = cd.quick_age_function(20., 0., 0.001, 1, **cosmosim)
 
     # Redshift bins for SNeIa
@@ -83,13 +89,14 @@ for sim in range(len(sim_dir)):
         #distmid_p = [dist_mid[idx] for idx in indx[:-2]]
         distbet_p = [dist_bet[idx] for idx in indx[:-1]]
         # Calculate app. Einstein radius for point lense
-        A_E = SN.Einstein_ring(LC['VelDisp'][i], c, LC['redshift'][i],
+        A_E = SN.Einstein_ring(LC['VelDisp'][i]+20, c, LC['redshift'][i],
                                lensdist, None, 'rad')
         u_lenspos = np.asarray(l_poslc/np.linalg.norm(l_poslc))
         l_lenspos = np.linalg.norm(l_poslc)
 
         # Calculate Volume for SNeIa distribution
-        fov_rad = 0.2*A_E  # convert radians to arcsec
+        #fov_rad = A_E*2 # for Rockstar
+        fov_rad = A_E   # for Subfind 
         V, fov_Mpc = SN.Einstein_Volume(fov_rad, dist_sr, distbet_p)
 
         # Number of SNeIa in time and Volume
@@ -142,26 +149,48 @@ for sim in range(len(sim_dir)):
     L_AE = np.asarray(L_AE);         R_E = np.asarray(R_E)
     L_indx = np.asarray(L_indx);   L_fov = np.asarray(L_fov)
     print('->', len(L_indx), 'number of lenses')
-    hf = h5py.File(lc_dir[sim]+'LC_SN_'+sim_name[sim]+'.h5', 'w')
-    hf.create_dataset('Halo_Rockstar_ID', data=LC['Halo_ID'][L_indx])  # not Rockstar ID
-    hf.create_dataset('Halo_ID', data=L_indx)  # not Rockstar ID
-    hf.create_dataset('snapnum', data=LC['snapnum'][L_indx])
-    hf.create_dataset('Halo_z', data=LC['redshift'][L_indx])
-    hf.create_dataset('M200', data=LC['M200'][L_indx])
-    hf.create_dataset('Rvir', data=LC['Rvir'][L_indx])
-    hf.create_dataset('Rsca', data=LC['Rsca'][L_indx])
-    hf.create_dataset('Rvmax', data=LC['Rvmax'][L_indx])
-    hf.create_dataset('Vmax', data=LC['Vmax'][L_indx])
-    hf.create_dataset('HaloPosBox', data=LC['HaloPosBox'][L_indx])
-    hf.create_dataset('HaloPosLC', data=LC['HaloPosLC'][L_indx])
-    hf.create_dataset('VelDisp', data=LC['VelDisp'][L_indx])
-    hf.create_dataset('Ellip', data=LC['Ellip'][L_indx])
-    hf.create_dataset('Pa', data=LC['Pa'][L_indx])
-    hf.create_dataset('FOV', data=L_fov)
-    hf.create_dataset('Src_ID', data=S_ID)
-    hf.create_dataset('Src_z', data=S_z)
-    hf.create_dataset('SrcPosSky', data=S_possky)
-    #hf.create_dataset('SrcPosBox', data=S_posbos)
-    hf.create_dataset('Einstein_angle', data=L_AE)  #[rad]
-    #hf.create_dataset('Einstein_radius', data=R_E)
+    hf = h5py.File(lc_dir[sim]+hf_name+'/LC_SN_'+sim_name[sim]+'_rndseed1.h5', 'w')
+    if hf_name == 'Subfind':
+        hf.create_dataset('Halo_Subfind_ID', data=LC['Halo_ID'][L_indx])  # Rockstar ID
+        hf.create_dataset('Halo_ID', data=L_indx)  # not Rockstar ID
+        hf.create_dataset('snapnum', data=LC['snapnum'][L_indx])
+        hf.create_dataset('Halo_z', data=LC['redshift'][L_indx])
+        hf.create_dataset('M200', data=LC['M200'][L_indx])
+        hf.create_dataset('Rhalfmass', data=LC['Rhalfmass'][L_indx])
+        hf.create_dataset('Rvmax', data=LC['Rvmax'][L_indx])
+        hf.create_dataset('Vmax', data=LC['Vmax'][L_indx])
+        hf.create_dataset('HaloPosBox', data=LC['HaloPosBox'][L_indx])
+        hf.create_dataset('HaloPosLC', data=LC['HaloPosLC'][L_indx])
+        hf.create_dataset('HaloVel', data=LC['HaloVel'][L_indx])
+        hf.create_dataset('VelDisp', data=LC['VelDisp'][L_indx])
+        hf.create_dataset('FOV', data=L_fov)
+        hf.create_dataset('Src_ID', data=S_ID)
+        hf.create_dataset('Src_z', data=S_z)
+        hf.create_dataset('SrcPosSky', data=S_possky)
+        #hf.create_dataset('SrcPosBox', data=S_posbos)
+        hf.create_dataset('Einstein_angle', data=L_AE)  #[rad]
+        #hf.create_dataset('Einstein_radius', data=R_E)
+    elif hf_name == 'Rockstar':
+        hf.create_dataset('Halo_Rockstar_ID', data=LC['Halo_ID'][L_indx])  # Rockstar ID
+        hf.create_dataset('Halo_ID', data=L_indx)  # not Rockstar ID
+        hf.create_dataset('snapnum', data=LC['snapnum'][L_indx])
+        hf.create_dataset('Halo_z', data=LC['redshift'][L_indx])
+        hf.create_dataset('M200', data=LC['M200'][L_indx])
+        hf.create_dataset('Rvir', data=LC['Rvir'][L_indx])
+        hf.create_dataset('Rsca', data=LC['Rsca'][L_indx])
+        hf.create_dataset('Rvmax', data=LC['Rvmax'][L_indx])
+        hf.create_dataset('Vmax', data=LC['Vmax'][L_indx])
+        hf.create_dataset('HaloPosBox', data=LC['HaloPosBox'][L_indx])
+        hf.create_dataset('HaloPosLC', data=LC['HaloPosLC'][L_indx])
+        hf.create_dataset('HaloVel', data=LC['HaloVel'][L_indx])
+        hf.create_dataset('VelDisp', data=LC['VelDisp'][L_indx])
+        hf.create_dataset('Ellip', data=LC['Ellip'][L_indx])
+        hf.create_dataset('Pa', data=LC['Pa'][L_indx])
+        hf.create_dataset('FOV', data=L_fov)
+        hf.create_dataset('Src_ID', data=S_ID)
+        hf.create_dataset('Src_z', data=S_z)
+        hf.create_dataset('SrcPosSky', data=S_possky)
+        #hf.create_dataset('SrcPosBox', data=S_posbos)
+        hf.create_dataset('Einstein_angle', data=L_AE)  #[rad]
+        #hf.create_dataset('Einstein_radius', data=R_E)
     hf.close()

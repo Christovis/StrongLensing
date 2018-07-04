@@ -1,3 +1,4 @@
+import sys
 import Ellipticity as Ell
 import constants as cc
 import CosmoDist as cd
@@ -5,6 +6,7 @@ import numpy as np
 from astropy import units as u
 from astropy import constants as const
 from astropy.cosmology import Planck15 as cosmo
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/')
 import readsubf
 import readsnap
 
@@ -43,6 +45,9 @@ def Einstein_ring(veldisp, c, z, Dls, Ds, dim):
         return R_E
     elif dim == 'rad':
         return A_E.to_value('rad')
+# A_E1 = (np.sqrt((4*const.G.to_value('kpc^3/(kg*s^2)')*M200)/ \
+#         ((const.c.to_value('kpc/s'))**2*Dl)))#*u.rad).to_value('arcsec')
+
 
 
 def angle(v1, v2):
@@ -132,27 +137,44 @@ def SNeIa_distr(yr, V, zmid, agefunc, redfunc, **cosmosim):
     return SNIa_num
 
 
-def Einstein_Volume(A_E, distmid_p, distbet_p):
+def Einstein_Volume(fov, l_dist, z_dist):
     # see Goldstein & Oguri
-    fov_radii = [4*A_E*dist for dist in distmid_p]  # [Mpc]
+    fov = [4*fov*dist for dist in l_dist]  # [Mpc]
     # Volume Element  [Mpc**3]
-    V = [2*np.pi*fov_radii[j]**2*distbet_p[j] for j in range(len(distbet_p))]
-    return V, fov_radii 
+    #V = [2*np.pi*fov_radii[j]**2*distbet_p[j] for j in range(len(distbet_p))]
+    #V = [(2*fov[j])**2*z_dist[j] for j in range(len(z_dist))]  # for Rockstar
+    V = [fov[j]**2*z_dist[j] for j in range(len(z_dist))]   # for Subfind
+    return V, fov
 
 
-def select_halos(Halos):
-    indx = np.where(Halos['M200'] > 1e13)
-    Halos = {'snapnum' : Halos['snapnum'][indx],
-            'Halo_ID' : Halos['Halo_ID'][indx],
-            'redshift' : Halos['redshift'][indx],
-            'M200' : Halos['M200'][indx],
-            'Rvir' : Halos['Rvir'][indx],
-            'Rsca' : Halos['Rsca'][indx],
-            'Rvmax' : Halos['Rvmax'][indx],
-            'Vmax' : Halos['Vmax'][indx],
-            'HaloPosBox' : Halos['HaloPosBox'][indx],
-            'HaloPosLC' : Halos['HaloPosLC'][indx],
-            'VelDisp' : Halos['VelDisp'][indx],
-            'Ellip' : Halos['Ellip'][indx],
-            'Pa' : Halos['Pa'][indx]}
+def select_halos(Halos, hfname):
+    if hfname == 'Subfind':
+        indx = np.where(Halos['M200'] > 1e11)[0]
+        Halos = {'snapnum' : Halos['snapnum'][indx],
+                'Halo_ID' : Halos['Halo_ID'][indx],
+                'redshift' : Halos['Halo_z'][indx],
+                'M200' : Halos['M200'][indx],
+                'Rhalfmass' : Halos['Rhalfmass'][indx],
+                'Rvmax' : Halos['Rvmax'][indx],
+                'Vmax' : Halos['Vmax'][indx],
+                'HaloPosBox' : Halos['HaloPosBox'][indx],
+                'HaloPosLC' : Halos['HaloPosLC'][indx],
+                'HaloVel' : Halos['HaloVel'][indx],
+                'VelDisp' : Halos['Vrms'][indx]}
+    elif hfname == 'Rockstar':
+        indx = np.where(Halos['M200'] > 1e11)[0]
+        Halos = {'snapnum' : Halos['snapnum'][indx],
+                'Halo_ID' : Halos['Halo_ID'][indx],
+                'redshift' : Halos['Halo_z'][indx],
+                'M200' : Halos['M200'][indx],
+                'Rvir' : Halos['Rvir'][indx],
+                'Rsca' : Halos['Rsca'][indx],
+                'Rvmax' : Halos['Rvmax'][indx],
+                'Vmax' : Halos['Vmax'][indx],
+                'HaloPosBox' : Halos['HaloPosBox'][indx],
+                'HaloPosLC' : Halos['HaloPosLC'][indx],
+                'HaloVel' : Halos['HaloVel'][indx],
+                'VelDisp' : Halos['Vrms'][indx],
+                'Ellip' : Halos['Ellip'][indx],
+                'Pa' : Halos['Pa'][indx]}
     return Halos
