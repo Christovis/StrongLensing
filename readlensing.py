@@ -24,6 +24,7 @@ def Simulation_Specs(filename):
     sim_phy = []
     sim_name = []
     sim_col = []
+    hf_name = []
     hf_dir = []
     lc_dir = []
     glafic_dir = []
@@ -43,27 +44,53 @@ def Simulation_Specs(filename):
             lc_dir.append(lcdir)
             glaficdir = Settings[k+5].split()[0]
             glafic_dir.append(glaficdir)
-    return sim_dir, sim_phy, sim_name, sim_col, hf_dir, lc_dir, glafic_dir, HQ_dir
+    return sim_dir, sim_phy, sim_name, sim_col, hf_dir, hf_name, lc_dir, glafic_dir, HQ_dir
 
 
-def LightCone_without_SN(filename, dataformat):
+def LightCone_without_SN(filename, hfname):
+    print(filename)
     data = h5py.File(filename, 'r')
-    # Get the data
-    snapnum = data['snapnum'].value  # []
-    Halo_ID = data['Halo_ID'].value                # []
-    Halo_z = data['Halo_z'].value       # []
-    Mvir = data['Mvir'].value            # [Msun/h]
-    HaloPosBox = data['HaloPosBox'].value # [x, y, z] [Mpc] com. distance
-    HaloPosLC = data['HaloPosLC'].value   # [x, y, z] [Mpc] com. distance
-    HaloVel = data['HaloVel'].value   # [x, y, z] [Mpc] com. distance
-    Vmax = data['Vmax'].value  # [km/s] com. distance
-    Vrms = data['Vrms'].value  # [km/s] com. distance
-    Rvir = data['Rvir'].value   # [kpc/h] com. distance
-    Rsca = data['Rs'].value      # [kpc/h] com. distance
-    Rvmax = data['Rvmax'].value    # [kpc/h] com. distance
-    Ellip = data['ellipticity'].value  # [x, y, z] [Mpc] com. distance
-    Pa = data['position_angle'].value    # [radiants]return
-    if dataformat == 'dictionary':
+    if hfname == 'Subfind':
+        # Get the data
+        snapnum = data['snapnum'].value  # []
+        Halo_ID = data['Halo_ID'].value                # []
+        Halo_z = data['Halo_z'].value       # []
+        Mvir = data['Mvir'].value            # [Msun/h]
+        HaloPosBox = data['HaloPosBox'].value # [x, y, z] [Mpc] com. distance
+        HaloPosLC = data['HaloPosLC'].value   # [x, y, z] [Mpc] com. distance
+        HaloVel = data['HaloVel'].value   # [x, y, z] [Mpc] com. distance
+        Vmax = data['Vmax'].value  # [km/s] com. distance
+        Vrms = data['Vrms'].value  # [km/s] com. distance
+        Rhalfmass = data['Rhalfmass'].value      # [kpc/h] com. distance
+        Rvmax = data['Rvmax'].value    # [kpc/h] com. distance
+        LCHalos = {'snapnum' : snapnum,
+                  'Halo_ID' : Halo_ID,
+                  'Halo_z' : Halo_z,
+                  'M200' : Mvir,
+                  'Rhalfmass' : Rhalfmass,
+                  'Rvmax' : Rvmax,
+                  'Vmax' : Vmax,
+                  'HaloPosBox' : HaloPosBox,
+                  'HaloPosLC' : HaloPosLC,
+                  'HaloVel' : HaloVel,
+                  'Vrms' : Vrms}
+        return LCHalos
+    elif hfname == 'Rockstar':
+        # Get the data
+        snapnum = data['snapnum'].value  # []
+        Halo_ID = data['Halo_ID'].value                # []
+        Halo_z = data['Halo_z'].value       # []
+        Mvir = data['Mvir'].value            # [Msun/h]
+        HaloPosBox = data['HaloPosBox'].value # [x, y, z] [Mpc] com. distance
+        HaloPosLC = data['HaloPosLC'].value   # [x, y, z] [Mpc] com. distance
+        HaloVel = data['HaloVel'].value   # [x, y, z] [Mpc] com. distance
+        Vmax = data['Vmax'].value  # [km/s] com. distance
+        Vrms = data['Vrms'].value  # [km/s] com. distance
+        Rvir = data['Rvir'].value   # [kpc/h] com. distance
+        Rsca = data['Rs'].value      # [kpc/h] com. distance
+        Rvmax = data['Rvmax'].value    # [kpc/h] com. distance
+        Ellip = data['ellipticity'].value  # [x, y, z] [Mpc] com. distance
+        Pa = data['position_angle'].value    # [radiants]return
         LCHalos = {'snapnum' : snapnum,
               'Halo_ID' : Halo_ID,
               'Halo_z' : Halo_z,
@@ -79,33 +106,73 @@ def LightCone_without_SN(filename, dataformat):
               'Ellip' : Ellip,
               'Pa' : Pa}
         return LCHalos
-    else:
-        return subsnapnm, subID, redshift, submass, subpos_box, subpos_lc, subvmax, subveldisp, subrvir, subrs, subrvmax, subellipse, subpa
 
 
-def LightCone_with_SN_lens(filename, dataformat):
-    data = h5py.File(filename, 'r')
-    Halo_ID = data['Halo_ID'].value
-    snapnum = data['snapnum'].value
-    Halo_z = data['Halo_z'].value
-    M200 = data['M200'].value  #[Msun/h]
-    Rvir = data['Rvir'].value*1e-3  #[Mpc/h]
-    Rsca = data['Rsca'].value*1e-3  #[Mpc/h]
-    Rvmax = data['Rvmax'].value*1e-3  #[Mpc/h]
-    Vmax = data['Vmax'].value  #[km/s]
-    HaloPosBox = data['HaloPosBox'].value  #[Mpc/h]
-    HaloPosLC = data['HaloPosLC'].value  #[Mpc/h]
-    VelDisp= data['VelDisp'].value  #[km/h]
-    Ellip = data['Ellip'].value
-    Pa = data['Pa'].value
-    FOV = data['FOV'].value  #[arcsec]
-    Src_ID = data['Src_ID'].value
-    Src_z = data['Src_z'].value
-    SrcPosSky = data['SrcPosSky'].value
-    Einstein_angle = data['Einstein_angle'].value  #[arcsec]
-    #Einstein_radius = data['Einstein_radius'].value  #[kpc]
-    if dataformat == 'dictionary':
+def LightCone_with_SN_lens(filename, hfname):
+    if hfname == 'Subfind':
+        data = h5py.File(filename, 'r')
+        Halo_ID = data['Halo_ID'].value
+        Halo_Subfind_ID = data['Halo_Subfind_ID'].value
+        snapnum = data['snapnum'].value
+        Halo_z = data['Halo_z'].value
+        M200 = data['M200'].value  #[Msun/h]
+        Rhalfmass = data['Rhalfmass'].value*1e-3  #[Mpc/h]
+        Rvmax = data['Rvmax'].value*1e-3  #[Mpc/h]
+        Vmax = data['Vmax'].value  #[km/s]
+        HaloPosBox = data['HaloPosBox'].value  #[Mpc/h]
+        HaloPosLC = data['HaloPosLC'].value  #[Mpc/h]
+        HaloVel = data['HaloVel'].value  #[Mpc/h]
+        VelDisp= data['VelDisp'].value  #[km/h]
+        FOV = data['FOV'].value  #[arcsec]
+        Src_ID = data['Src_ID'].value
+        Src_z = data['Src_z'].value
+        SrcPosSky = data['SrcPosSky'].value
+        Einstein_angle = data['Einstein_angle'].value  #[arcsec]
+        #Einstein_radius = data['Einstein_radius'].value  #[kpc]
         LC = {'Halo_ID' : Halo_ID,
+              'Halo_Subfind_ID' : Halo_Subfind_ID,
+              'snapnum' : snapnum,
+              'Halo_z' : Halo_z,
+              'M200' : M200,  #[Msun/h]
+              'Rhalfmass' : Rhalfmass,
+              'Rvmax' : Rvmax,
+              'Vmax' : Vmax,  #[km/s]
+              'HaloPosBox' : HaloPosBox,
+              'HaloPosLC' : HaloPosLC,
+              'HaloVel' : HaloVel,
+              'VelDisp' : VelDisp,  #[km/s]
+              'FOV' : FOV,  #[arcsec]
+              'Src_ID' : Src_ID,
+              'Src_z' : Src_z,
+              'SrcPosSky' : SrcPosSky,
+              'Einstein_angle' : Einstein_angle}
+              #'Einstein_radius' : Einstein_radius}
+        return LC
+    elif hfname == 'Rockstar':
+        data = h5py.File(filename, 'r')
+        Halo_ID = data['Halo_ID'].value
+        Halo_Rockstar_ID = data['Halo_Rockstar_ID'].value
+        snapnum = data['snapnum'].value
+        Halo_z = data['Halo_z'].value
+        M200 = data['M200'].value  #[Msun/h]
+        Rvir = data['Rvir'].value*1e-3  #[Mpc/h]
+        Rsca = data['Rsca'].value*1e-3  #[Mpc/h]
+        Rvmax = data['Rvmax'].value*1e-3  #[Mpc/h]
+        Vmax = data['Vmax'].value  #[km/s]
+        HaloPosBox = data['HaloPosBox'].value  #[Mpc/h]
+        HaloPosLC = data['HaloPosLC'].value  #[Mpc/h]
+        HaloVel = data['HaloVel'].value  #[Mpc/h]
+        VelDisp= data['VelDisp'].value  #[km/h]
+        Ellip = data['Ellip'].value
+        Pa = data['Pa'].value
+        FOV = data['FOV'].value  #[arcsec]
+        Src_ID = data['Src_ID'].value
+        Src_z = data['Src_z'].value
+        SrcPosSky = data['SrcPosSky'].value
+        Einstein_angle = data['Einstein_angle'].value  #[arcsec]
+        #Einstein_radius = data['Einstein_radius'].value  #[kpc]
+        LC = {'Halo_ID' : Halo_ID,
+              'Halo_Rockstar_ID' : Halo_Rockstar_ID,
                'snapnum' : snapnum,
                'Halo_z' : Halo_z,
                'M200' : M200,  #[Msun/h]
@@ -115,6 +182,7 @@ def LightCone_with_SN_lens(filename, dataformat):
                'Vmax' : Vmax,  #[km/s]
                'HaloPosBox' : HaloPosBox,
                'HaloPosLC' : HaloPosLC,
+               'HaloVel' : HaloVel,
                'VelDisp' : VelDisp,  #[km/s]
                'Ellip' : Ellip,
                'Pa' : Pa,
@@ -125,63 +193,6 @@ def LightCone_with_SN_lens(filename, dataformat):
                'Einstein_angle' : Einstein_angle}
                #'Einstein_radius' : Einstein_radius}
         return LC
-    elif dataformat == 'old':
-        data = open(filename, 'r')
-        lines = data.readlines()
-        iid = []
-        obsf = []
-        z = []
-        Mvir = []
-        Vrms = []
-        con = []
-        Rvir = []
-        sky_pos = []
-        Dc = []
-        e = []
-        theta = []
-        pos = []
-        Rvmax = []
-        Vmax = []
-        rockstar_id =[]
-        snapnum = []
-        for k in range(len(lines))[1:]:
-            [ids, observation_field_side_length, redshift, m200, velocity_dispersion,
-             concentration, virial_radius, sky_x, sky_y, diameter_distance_lense,
-             ellipticity, position_angle, simbox_x, simbox_y, simbox_z, r_vmax,
-             v_max, Rockstar_ID, snapshot_number] = lines[k].split()
-            iid.append(int(ids))
-            obsf.append(float(observation_field_side_length))
-            z.append(float(redshift))
-            Mvir.append(float(m200))  # [Msun/h]
-            Vrms.append(float(velocity_dispersion))  #[km/s]
-            con.append(float(concentration))  # []
-            Rvir.append(float(virial_radius)/1e3)  # [Mpc/h]
-            sky_pos.append([float(sky_x), float(sky_y)])  #[rad?]
-            Dc.append(float(diameter_distance_lense))  #[Mpc/h]
-            e.append(float(ellipticity))
-            theta.append(float(position_angle))
-            pos.append([float(simbox_x), float(simbox_y), float(simbox_z)])  # [Mpc]
-            Rvmax.append(float(r_vmax)/1e3)  # [Mpc/h]
-            Vmax.append(float(v_max))  # [km/s]
-            rockstar_id.append(int(Rockstar_ID))
-            snapnum.append(int(snapshot_number))
-        iid = np.asarray(iid)
-        obsf = np.asarray(obsf)
-        z = np.asarray(z)
-        Mvir = np.asarray(Mvir)
-        Vrms = np.asarray(Vrms)
-        con = np.asarray(con)
-        Rvir = np.asarray(Rvir)
-        sky_pos = np.asarray(sky_pos)
-        Dc = np.asarray(Dc)
-        e = np.asarray(e)
-        theta = np.asarray(theta)
-        pos = np.asarray(pos)
-        Rvmax = np.asarray(Rvmax)
-        Vmax = np.asarray(Vmax)
-        rockstar_id = np.asarray(rockstar_id)
-        snapnum = np.asarray(snapnum)
-        return iid, obsf, z, Mvir, Vrms, con, Rvir, sky_pos, Dc, e, theta, pos, Rvmax, Vmax, rockstar_id, snapnum
 
 
 def LightCone_with_SN_source(filename):
