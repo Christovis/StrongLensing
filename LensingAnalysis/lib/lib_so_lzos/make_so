@@ -1,3 +1,0 @@
-gcc -Wall -fPIC -c ./lanczos_derivative.c 
-gcc -shared lanczos_derivative.o -o ./liblzos.so
-rm ./*.o

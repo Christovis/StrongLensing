@@ -1,3 +1,0 @@
-gcc -Wall -O2 -fopenmp -c -fPIC ./bary2cart.c -lm
-gcc -shared -fopenmp ./bary2cart.o -lm -o libtri.so 
-rm *.o
