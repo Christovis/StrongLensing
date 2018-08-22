@@ -1,0 +1,3 @@
+gcc -Wall -O2 -fopenmp -c -fPIC ./vrms.c -lm
+gcc -shared -fopenmp *.o -lm -o ./libvrms.so
+rm ./*.o

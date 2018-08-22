@@ -1,0 +1,3 @@
+gcc -Wall -O2 -fopenmp -c -fPIC ./shmr.c -lm
+gcc -shared -fopenmp *.o -lm -o ./libshmr.so
+rm ./*.o
