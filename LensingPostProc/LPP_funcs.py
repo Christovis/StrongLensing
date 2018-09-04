@@ -1,10 +1,10 @@
 from __future__ import division
 import os, sys, logging
-import pandas as pd
-import pickle
 import numpy as np
-from scipy import stats
 import h5py
+from astropy import units as u
+from astropy import constants as const
+import cfuncs as cf
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/')  # parent directory
 import readlensing as rf
 import readsnap

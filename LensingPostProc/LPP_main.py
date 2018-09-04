@@ -1,9 +1,8 @@
 from __future__ import division
-import os, sys, logging
-import pandas as pd
-import pickle
+import os, sys, glob, logging
 import numpy as np
-from scipy import stats
+import pickle
+import pandas as pd
 import h5py
 from astropy import units as u
 from astropy import constants as const
@@ -15,7 +14,7 @@ import read_hdf5
 import readlensing as rf
 import readsnap
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/')
-import lm_tools  # Why do I need to load this???
+import lm_funcs_mp # Why do I need to load this???
 
 
 ################################################################################
@@ -28,17 +27,18 @@ logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
 LCSettings = '/cosma5/data/dp004/dc-beck3/StrongLensing/shell_script/LCSettings.txt'
 sim_dir, sim_phy, sim_name, sim_col, hf_dir, hfname, lc_dir, dd, HQ_dir = rf.Simulation_Specs(LCSettings)
 
-CPUs = 5 # Number of CPUs to use has to be the same as in LensingMap/LM_create.py
-
+CPUs = 2 # Number of CPUs to use has to be the same as in LensingMap/LM_create.py
 ################################################################################
 # Run through simulations
 for sim in range(len(sim_dir)):
     # File for lens & source properties
-    lc_file = lc_dir[sim]+hfname+'/LC_SN_'+sim_name[sim]+'_rndseed1.h5'
+    #lc_file = lc_dir[sim]+hfname+'/LC_SN_'+sim_name[sim]+'_rndseed31.h5'
     # File for lensing-maps
     lm_dir = HQ_dir+'/LensingMap/'+sim_phy[sim]+hfname+'/'+sim_name[sim]+'/'
     # Simulation Snapshots
     snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
+    # Load LightCone Contents
+    #LC = rf.LightCone_with_SN_lens(lc_file, 'dictionary')
 
     # Units of Simulation
     scale = rf.simulation_units(sim_dir[sim])
@@ -49,34 +49,23 @@ for sim in range(len(sim_dir)):
                       Om0=s.header.omega_m,
                       Ode0=s.header.omega_l)
     h = s.header.hubble
-    
-    # Prepatre Processes to be run in parallel
-    jobs = []
-    manager = multiprocessing.Manager()
-    results_per_cpu = manager.dict()
-    for cpu in range(CPUs)[:1]:
-        # Load LensingMaps Contents
-        lm_file = lm_dir+'LM_Proc_'+str(cpu)+'_0.pickle'
+   
+    HF_ID=[]; HaloLCID=[]; SrcID=[]; Mdyn=[]; Mlens=[];
+    # Run through LensingMap output files 
+    for lm_file in glob.glob(lm_dir+'LM_1_Proc_*_0.pickle'):
+        # Load LensingMap Contents
         LM = pickle.load(open(lm_file, 'rb'))
-        p = Process(target=la.dyn_vs_lensing_mass, name='Proc_%d'%cpu,
-                    args=(cpu, LC, lm_file, snapfile, h, scale,
-                          HQ_dir, sim, sim_phy, sim_name, hfname,
-                          cosmo, results_per_cpu))
-        p.start()
-        jobs.append(p)
-    #for p in jobs:
-    #    p.join()
-
 
         previous_snapnum = -1
         # Run through lenses
         for ll in range(len(LM['Halo_ID'])):
             # Load Lens properties
-            HaloHFID = int(LM['Rockstar_ID'][ll])
+            HaloHFID = int(LM['HF_ID'][ll]) #int(LM['Rockstar_ID'][ll])
             HaloPosBox = LM['HaloPosBox'][ll]
             HaloVel = LM['HaloVel'][ll]
             snapnum = LM['snapnum'][ll]
             zl = LM['zl'][ll]
+            print('HaloHFID', HaloHFID)
 
             # Only load new particle data if lens is at another snapshot
             if (previous_snapnum != snapnum):
@@ -122,6 +111,8 @@ for sim in range(len(sim_dir)):
                                             star_pos[:, 2], HaloPosBox[0],
                                             HaloPosBox[1], HaloPosBox[2],
                                             star_mass, Rvir.to_value('Mpc'))*u.Mpc
+            if Rshm == 0.0:
+                continue
             
             ## Stellar Half Light Radius
             ### https://arxiv.org/pdf/1804.04492.pdf $3.3
@@ -129,15 +120,35 @@ for sim in range(len(sim_dir)):
             ## Mass dynamical
             star_indx = lppf.check_in_sphere(HaloPosBox, star_pos,
                                              Rshm.to_value('kpc'))
-            if len(Star_indx[0]) > 50:
-                slices = np.vstack((avec/np.linalg.norm(avec),
-                                    bvec/np.linalg.norm(bvec),
-                                    cvec/np.linalg.norm(cvec)))
-                Mdyn = lppf.mass_dynamical(Rshm, star_vel[star_indx],
-                                           HaloPosBox, hvel, sigma)
-                results.append([LM['Halo_ID'][ll], LM['Sources']['Src_ID'][ll][ss],
-                                Mdyn, Mlens])
-        
+            if len(star_indx[0]) > 50:
+                slices = np.vstack((epva/np.linalg.norm(epva),
+                                    epvb/np.linalg.norm(epvb),
+                                    epvc/np.linalg.norm(epvc)))
+                mdynn = lppf.mass_dynamical(Rshm, star_vel[star_indx],
+                                            HaloPosBox, hvel[0], slices)
+            
+            ## Mass strong lensing
+            # Run through sources
+            for ss in range(len(LM['Sources']['Src_ID'][ll])):
+                zs = LM['Sources']['zs'][ll][ss]
+                Mlens.append(lppf.mass_lensing(Rshm, zl, zs, cosmo))
+                Mdyn.append(mdynn)
+                HF_ID.append(HaloHFID)
+                HaloLCID.append(LM['Halo_ID'][ll])
+                SrcID.append(LM['Sources']['Src_ID'][ll][ss])
+    Mlens = np.asarray(Mlens)
+    Mdyn = np.asarray(Mdyn)
+    HF_ID = np.asarray(HF_ID)
+    HaloLCID = np.asarray(HaloLCID)
+    SrcID = np.asarray(SrcID)
+    lpp_dir = HQ_dir+'/LensingPostProc/'+sim_phy[sim]+hfname+'/'
+    hf = h5py.File(lpp_dir+'LPP_'+sim_name[sim]+'.h5', 'w')
+    hf.create_dataset('Halo_HF_ID', data=HF_ID)  # Rockstar ID
+    hf.create_dataset('Halo_LC_ID', data=HaloLCID)  # Rockstar ID
+    hf.create_dataset('Src_ID', data=SrcID)  # not Rockstar ID
+    hf.create_dataset('MassDynamical', data=Mdyn)
+    hf.create_dataset('MassLensing', data=Mlens)
+    hf.close()
         ## Magnitude of SNIa multiple images
         # Run through sources
         #for ss in range(len(LM['Sources']['Src_ID'][ll])):
