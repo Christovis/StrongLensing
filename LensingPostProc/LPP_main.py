@@ -9,12 +9,14 @@ from astropy import constants as const
 from astropy.cosmology import LambdaCDM
 import cfuncs as cf
 import LPP_funcs as lppf
-sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/')  # parent directory
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import read_hdf5
 import readlensing as rf
 import readsnap
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/')
-import lm_funcs_mp # Why do I need to load this???
+#import lm_funcs_mp # Why do I need to load this???
+import LM_main
+from LM_main import plant_Tree # Why do I need to load this???
 
 
 ################################################################################
@@ -27,18 +29,13 @@ logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
 LCSettings = '/cosma5/data/dp004/dc-beck3/StrongLensing/shell_script/LCSettings.txt'
 sim_dir, sim_phy, sim_name, sim_col, hf_dir, hfname, lc_dir, dd, HQ_dir = rf.Simulation_Specs(LCSettings)
 
-CPUs = 2 # Number of CPUs to use has to be the same as in LensingMap/LM_create.py
 ################################################################################
 # Run through simulations
 for sim in range(len(sim_dir)):
-    # File for lens & source properties
-    #lc_file = lc_dir[sim]+hfname+'/LC_SN_'+sim_name[sim]+'_rndseed31.h5'
     # File for lensing-maps
     lm_dir = HQ_dir+'/LensingMap/'+sim_phy[sim]+hfname+'/'+sim_name[sim]+'/'
     # Simulation Snapshots
     snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
-    # Load LightCone Contents
-    #LC = rf.LightCone_with_SN_lens(lc_file, 'dictionary')
 
     # Units of Simulation
     scale = rf.simulation_units(sim_dir[sim])
@@ -52,11 +49,13 @@ for sim in range(len(sim_dir)):
    
     HF_ID=[]; HaloLCID=[]; SrcID=[]; Mdyn=[]; Mlens=[];
     # Run through LensingMap output files 
-    for lm_file in glob.glob(lm_dir+'LM_1_Proc_*_0.pickle'):
+    #for lm_file in glob.glob(lm_dir+'LM_1_Proc_*_0.pickle'):
+    for lm_file in glob.glob(lm_dir+'LM_new_GR.pickle'):
         # Load LensingMap Contents
         LM = pickle.load(open(lm_file, 'rb'))
-
+       
         previous_snapnum = -1
+        print('::::::::::', len(LM['HF_ID'][:]))
         # Run through lenses
         for ll in range(len(LM['Halo_ID'])):
             # Load Lens properties
@@ -65,20 +64,17 @@ for sim in range(len(sim_dir)):
             HaloVel = LM['HaloVel'][ll]
             snapnum = LM['snapnum'][ll]
             zl = LM['zl'][ll]
-            print('HaloHFID', HaloHFID)
 
             # Only load new particle data if lens is at another snapshot
             if (previous_snapnum != snapnum):
                 rks_file = '/cosma5/data/dp004/dc-beck3/rockstar/'+sim_phy[sim]+ \
                            sim_name[sim]+'/halos_' + str(snapnum)+'.dat'
-                df = pd.read_csv(rks_file, sep='\s+', skiprows=np.arange(1, 16))
+                hdata = pd.read_csv(rks_file, sep='\s+', skiprows=np.arange(1, 16))
                 # Load Particle Properties
-                #s = read_hdf5.snapshot(snapnum, snapfile)
                 # 0 Gas, 1 DM, 4 Star[Star=+time & Wind=-time], 5 BH
-                # Have to load all particles :-( -> takes too long
-                #s.read(["Velocities", "Coordinates", "AGE"], parttype=-1)
-                #Star_pos = s.data['Velocities']['stars']*scale
                 snap = snapfile % (snapnum, snapnum)
+                #gas_pos = readsnap.read_block(snap, 'POS ', parttype=0)*scale
+                #gas_vel = readsnap.read_block(snap, 'VEL ', parttype=0)
                 star_pos = readsnap.read_block(snap, 'POS ', parttype=4)*scale
                 star_age = readsnap.read_block(snap, 'AGE ', parttype=4)
                 star_vel = readsnap.read_block(snap, 'VEL ', parttype=4)
@@ -87,22 +83,26 @@ for sim in range(len(sim_dir)):
                 star_vel = star_vel[star_age >= 0]
                 star_mass = star_mass[star_age >= 0]
                 del star_age
+                #star_pos = np.vstack((star_pos, gas_pos))
+                #del gas_pos
+                #star_vel = np.vstack((star_vel, gas_vel))
+                #del gas_vel
             previous_snapnum = snapnum
 
             # Load Halo Properties
-            indx = df['#ID'][df['#ID'] == HaloHFID].index[0]
-            Vrms = df['Vrms'][indx]*(u.km/u.s)  #[km/s]
-            Rvir = df['Rvir'][indx]*u.kpc
-            Rhalfmass = df['Halfmass_Radius'][indx]*u.kpc
+            indx = hdata['#ID'][hdata['#ID'] == HaloHFID].index[0]
+            Vrms = hdata['Vrms'][indx]*(u.km/u.s)  #[km/s]
+            Rvir = hdata['Rvir'][indx]*u.kpc
+            #Rhalfmass = hdata['Halfmass_Radius'][indx]*u.kpc
             #hpos = pd.concat([df['X']*scale, df['Y']*scale, df['Z']*scale],
             #                 axis=1).loc[[indx]].values
-            hvel = pd.concat([df['VX'], df['VY'], df['VZ']],
+            hvel = pd.concat([hdata['VX'], hdata['VY'], hdata['VZ']],
                              axis=1).loc[[indx]].values
-            epva = pd.concat([df['A[x]'], df['A[y]'], df['A[z]']],
+            epva = pd.concat([hdata['A[x]'], hdata['A[y]'], hdata['A[z]']],
                              axis=1).loc[[indx]].values
-            epvb = pd.concat([df['B[x]'], df['B[y]'], df['B[z]']],
+            epvb = pd.concat([hdata['B[x]'], hdata['B[y]'], hdata['B[z]']],
                              axis=1).loc[[indx]].values
-            epvc = pd.concat([df['C[x]'], df['C[y]'], df['C[z]']],
+            epvc = pd.concat([hdata['C[x]'], hdata['C[y]'], hdata['C[z]']],
                              axis=1).loc[[indx]].values
             
             ####----> Add keys <----####
@@ -120,18 +120,31 @@ for sim in range(len(sim_dir)):
             ## Mass dynamical
             star_indx = lppf.check_in_sphere(HaloPosBox, star_pos,
                                              Rshm.to_value('kpc'))
-            if len(star_indx[0]) > 50:
+            if len(star_indx[0]) > 100:
                 slices = np.vstack((epva/np.linalg.norm(epva),
                                     epvb/np.linalg.norm(epvb),
                                     epvc/np.linalg.norm(epvc)))
                 mdynn = lppf.mass_dynamical(Rshm, star_vel[star_indx],
                                             HaloPosBox, hvel[0], slices)
-            
+            else:
+                continue
+            if np.isnan(mdynn):
+                continue
+
             ## Mass strong lensing
             # Run through sources
             for ss in range(len(LM['Sources']['Src_ID'][ll])):
+                n_imgs = len(LM['Sources']['mu'][ll][ss])
+                #print('The source has %d lensed images' % n_imgs,
+                #      LM['Sources']['theta'][ll][ss])
+                if n_imgs == 1:
+                    continue
                 zs = LM['Sources']['zs'][ll][ss]
-                Mlens.append(lppf.mass_lensing(Rshm, zl, zs, cosmo))
+                Rein = LM['Sources']['Rein'][ll][ss]*u.kpc
+                if Rein == 0.0:
+                    continue
+                #print('-> \t The Einstein Radius is: %.3f' % Rein.to_value('kpc'))
+                Mlens.append(lppf.mass_lensing(Rein, zl, zs, cosmo))
                 Mdyn.append(mdynn)
                 HF_ID.append(HaloHFID)
                 HaloLCID.append(LM['Halo_ID'][ll])
@@ -142,10 +155,10 @@ for sim in range(len(sim_dir)):
     HaloLCID = np.asarray(HaloLCID)
     SrcID = np.asarray(SrcID)
     lpp_dir = HQ_dir+'/LensingPostProc/'+sim_phy[sim]+hfname+'/'
-    hf = h5py.File(lpp_dir+'LPP_'+sim_name[sim]+'.h5', 'w')
+    hf = h5py.File(lpp_dir+'LPP_'+sim_name[sim]+'_Rshm_all.h5', 'w')
     hf.create_dataset('Halo_HF_ID', data=HF_ID)  # Rockstar ID
-    hf.create_dataset('Halo_LC_ID', data=HaloLCID)  # Rockstar ID
-    hf.create_dataset('Src_ID', data=SrcID)  # not Rockstar ID
+    hf.create_dataset('Halo_LC_ID', data=HaloLCID)
+    hf.create_dataset('Src_ID', data=SrcID)
     hf.create_dataset('MassDynamical', data=Mdyn)
     hf.create_dataset('MassLensing', data=Mlens)
     hf.close()

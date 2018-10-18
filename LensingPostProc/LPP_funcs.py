@@ -5,10 +5,11 @@ import h5py
 from astropy import units as u
 from astropy import constants as const
 import cfuncs as cf
-sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/')  # parent directory
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import readlensing as rf
 import readsnap
 import read_hdf5
+
 
 def check_in_sphere(c, pos, Rth):
     r = np.sqrt((c[0]-pos[:, 0])**2 + (c[1]-pos[:, 1])**2 + (c[2]-pos[:, 2])**2)
@@ -40,15 +41,6 @@ def srclistinit(Nl):
     return s_srcID, s_deltat, s_mu, s_zs, s_alpha, s_detA, s_theta, s_beta, s_tancritcurves, s_einsteinradius
 
 
-def sigma_crit(zLens, zSource, cosmo):
-    Ds = cosmo.angular_diameter_distance(zSource)
-    Dl = cosmo.angular_diameter_distance(zLens)
-    Dls = cosmo.angular_diameter_distance_z1z2(zLens, zSource)
-    D = (Ds/(Dl*Dls)).to(1/u.meter)
-    sig_crit = (const.c**2/(4*np.pi*const.G))*D
-    return sig_crit
-
-
 def mass_dynamical(Rad, PartVel, HaloPosBox, HaloVel, slices):
     """
     Estimate dynamical mass based on virial radius and
@@ -66,9 +58,19 @@ def mass_dynamical(Rad, PartVel, HaloPosBox, HaloVel, slices):
     sigma = cf.call_vrms_gal(PartVel[:, 0], PartVel[:, 1], PartVel[:, 2],
                              HaloVel[0], HaloVel[1], HaloVel[2], slices) * \
             (u.kilometer/u.second)
+    
     # Virial Theorem
     Mdyn = (sigma.to('m/s')**2*Rad.to('m')/const.G.to('m3/(kg*s2)')).to_value('M_sun')
     return Mdyn
+
+
+def sigma_crit(zLens, zSource, cosmo):
+    Ds = cosmo.angular_diameter_distance(zSource)
+    Dl = cosmo.angular_diameter_distance(zLens)
+    Dls = cosmo.angular_diameter_distance_z1z2(zLens, zSource)
+    D = (Ds/(Dl*Dls)).to(1/u.meter)
+    sig_crit = (const.c**2/(4*np.pi*const.G))*D
+    return sig_crit
 
 
 def mass_lensing(Rein, zl, zs, cosmo):

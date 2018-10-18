@@ -5,14 +5,18 @@ import os, sys, logging
 from glob import glob
 import subprocess
 import numpy as np
+from sklearn.neighbors import KDTree
 import h5py
-#from scipy.ndimage.filters import gaussian_filter
+from scipy.ndimage.filters import gaussian_filter
 from astropy import constants as const
 from astropy.cosmology import LambdaCDM
 import pandas as pd
-#import dm_funcs as DM
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib import rc
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import read_hdf5
+import DM_funcs as DMf
 #import readlensing as rf
 
 # MPI initialisation
@@ -21,7 +25,6 @@ comm = MPI.COMM_WORLD
 comm_rank = comm.Get_rank()
 comm_size = comm.Get_size()
 
-#import parallel_sort as ps
 from mpi_errchk import mpi_errchk
 
 import warnings
@@ -29,13 +32,19 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, append=1)
 os.system("taskset -p 0xff %d" % os.getpid())
 
 
-def cluster_subhalos(id_in, vrms_in, x_in, y_in, z_in, comm_size):
+def histedges_equalN(x, nbin):
+    npt = len(x)
+    bin_edges = np.interp(np.linspace(0, npt, nbin+1), np.arange(npt), np.sort(x))
+    bin_edges[0] = 0
+    bin_edges[-1] *= 1.1
+    return bin_edges
+
+
+def cluster_subhalos(id_in, vrms_in, x_in, y_in, z_in, _boundary, comm_size):
     """
     Devide simulation box into a number of equal sized parts 
     as there are processes along one axis.
     """
-    _boundary = [np.min(x_in[:]), np.max(x_in[:])*1.01]
-    _boundary = np.linspace(_boundary[0], _boundary[1], comm_size+1)
     _inds = np.digitize(x_in[:], _boundary)
     split_size_1d = np.zeros(comm_size)
     for b in range(comm_size):
@@ -58,13 +67,11 @@ def cluster_subhalos(id_in, vrms_in, x_in, y_in, z_in, comm_size):
     return id_out, vrms_out, x_out, y_out, z_out, split_size_1d, split_disp_1d
 
 
-def cluster_particles(mass_in, x_in, y_in, z_in, comm_size):
+def cluster_particles(mass_in, x_in, y_in, z_in, _boundary, comm_size):
     """
     Devide simulation box into a number of equal sized parts 
     as there are processes along one axis.
     """
-    _boundary = [np.min(x_in[:]), np.max(x_in[:])*1.01]
-    _boundary = np.linspace(_boundary[0], _boundary[1], comm_size+1)
     _inds = np.digitize(x_in[:], _boundary)
     split_size_1d = np.zeros(comm_size)
     for b in range(comm_size):
@@ -85,59 +92,140 @@ def cluster_particles(mass_in, x_in, y_in, z_in, comm_size):
     return mass_out, x_out, y_out, z_out, split_size_1d, split_disp_1d
 
 
-def projected_surface_density(pos, mass, centre, fov, bins=512, smooth=True,
-                              smooth_fac=None, neighbour_no=None):
+def adaptively_smoothed_maps(pos, h, mass, Lbox, centre, ncells, smooth_fac):
     """
-    Fit ellipsoid to 3D distribution of points and return eigenvectors
-    and eigenvalues of the result.
-    The same as 'projected_surface_density_adaptive', but assumes that
-    density map is not created and particle data loaded, and you can
-    choose between smoothed and closest particle density map.
-    Should be able to combine all three project_surface_density func's
-
-    Args:
-        pos: particle position (physical)
-        mass: particle mass
-        centre: lense centre [x, y, z]
-        fov:
-        bins:
-        smooth:
-        smooth_fac:
-        neighbour_no:
-
-    Returns:
-        Sigma: surface density [Msun/Mpc^2]
-        x: 
-        y:
+    Gaussien smoothing kernel for 'neighbour_no' nearest neighbours
+    Input:
+        h: distance to furthest particle for each particle
     """
-    Lbox = fov  #[Mpc]
-    Ncells = bins
+    hbins = int(np.log2(h.max()/h.min()))+2
+    hbin_edges = 0.8*h.min()*2**np.arange(hbins)
+    hbin_mids = np.sqrt(hbin_edges[1:]*hbin_edges[:-1])
+    hmask = np.digitize(h, hbin_edges)-1  # returns bin for each h
+    sigmaS = np.zeros((len(hbin_mids), ncells, ncells))
+    for i in np.arange(len(hbin_mids)):
+        maskpos = pos[hmask==i]  #X
+        maskm = mass[hmask==i]
+        maskSigma, xedges, yedges = np.histogram2d(maskpos[:, 0], maskpos[:, 1],
+                                                   bins=[ncells, ncells],
+                                                   weights=maskm)
+        pixelsmooth = smooth_fac*hbin_mids[i]/(xedges[1]-xedges[0])
+        sigmaS[i] = gaussian_filter(maskSigma, pixelsmooth, truncate=3)
+    return np.sum(sigmaS, axis=0), xedges, yedges
 
-    ################ Shift particle coordinates to centre ################
+
+def projected_surface_density_smooth_old(pos, mass, centre, fov, ncells,
+                                     smooth_fac, neighbour_no, ptype):
+    """
+    Input:
+        pos: particle positions
+        mass: particle masses
+        centre: centre of sub-&halo
+        fov: field-of-view
+        ncells: number of grid cells
+    """
     pos = pos - centre
-    ####################### DM 2D histogram map #######################
+    
+    _indx = np.logical_and(np.abs(pos[:, 0]) < 0.5*fov,
+                           np.abs(pos[:, 1]) < 0.5*fov)
+    pos = pos[_indx, :]
+    mass = mass[_indx]
+    
+    if (ptype == 'dm' and len(mass) <= 32):
+        return np.zeros((ncells, ncells))
+    elif (ptype == 'gas' and len(mass) <= 16):
+        return np.zeros((ncells, ncells))
+    elif ((np.abs(np.max(pos[:, 0]) - np.min(pos[:, 0])) > 0.1) or 
+            (np.abs(np.max(pos[:, 1]) - np.min(pos[:, 1])) > 0.1)):
+        #TODO: plot this falty situation
+        return np.zeros((ncells, ncells))
+    else:
+        # Find 'smoothing lengths'
+        kdt = KDTree(pos, leaf_size=30, metric='euclidean')
+        dist, ids = kdt.query(pos, k=neighbour_no, return_distance=True)
+        h = np.max(dist, axis=1)  # furthest particle for each particle
+        centre = np.array([0, 0, 0])
+        mass_in_cells, xedges, yedges = adaptively_smoothed_maps(pos, h,
+                                                                 mass,
+                                                                 fov,
+                                                                 centre,
+                                                                 ncells,
+                                                                 smooth_fac)
+        ###################### Projected surface density ######################
+        dx, dy = xedges[1]-xedges[0], yedges[1]-yedges[0]  #[Mpc]
+        sigma = mass_in_cells/(dx*dy)  #[Msun/Mpc^2]
+        return sigma
+
+
+def projected_surface_density_smooth_old(pos, mass, centre, fov, ncells,
+                                     smooth_fac, neighbour_no, ptype):
+    """
+    Input:
+        pos: particle positions
+        mass: particle masses
+        centre: centre of sub-&halo
+        fov: field-of-view
+        ncells: number of grid cells
+    """
+    pos = pos - centre
+    
+    _indx = np.logical_and(np.abs(pos[:, 0]) < 0.5*fov,
+                           np.abs(pos[:, 1]) < 0.5*fov)
+    pos = pos[_indx, :]
+    mass = mass[_indx]
+    
+    if (ptype == 'dm' and len(mass) <= 32):
+        return np.zeros((ncells, ncells))
+    elif (ptype == 'gas' and len(mass) <= 16):
+        return np.zeros((ncells, ncells))
+    elif ((np.abs(np.max(pos[:, 0]) - np.min(pos[:, 0])) > 0.1) or 
+            (np.abs(np.max(pos[:, 1]) - np.min(pos[:, 1])) > 0.1)):
+        #TODO: plot this falty situation
+        return np.zeros((ncells, ncells))
+    else:
+        # Find 'smoothing lengths'
+        kdt = KDTree(pos, leaf_size=30, metric='euclidean')
+        dist, ids = kdt.query(pos, k=neighbour_no, return_distance=True)
+        h = np.max(dist, axis=1)  # furthest particle for each particle
+        centre = np.array([0, 0, 0])
+        mass_in_cells, xedges, yedges = adaptively_smoothed_maps(pos, h,
+                                                                 mass,
+                                                                 fov,
+                                                                 centre,
+                                                                 ncells,
+                                                                 smooth_fac)
+        ###################### Projected surface density ######################
+        dx, dy = xedges[1]-xedges[0], yedges[1]-yedges[0]  #[Mpc]
+        sigma = mass_in_cells/(dx*dy)  #[Msun/Mpc^2]
+        return sigma
+
+
+def projected_surface_density(pos, mass, centre, Lbox, ncells):
+    """
+    """
+    # centre particles around subhalo
+    pos = pos - centre
+    # 2D histogram map
     _indx = np.logical_and(np.abs(pos[:, 0]) < 0.5*Lbox,
                            np.abs(pos[:, 1]) < 0.5*Lbox)
     pos = pos[_indx, :]
     mass = mass[_indx]
     if len(mass) == 0:
-        return None, None, None
+        return np.zeros((ncells, ncells))
     elif ((np.abs(np.max(pos[:, 0]) - np.min(pos[:, 0])) > 0.1) or 
             (np.abs(np.max(pos[:, 1]) - np.min(pos[:, 1])) > 0.1)):
         #TODO: plot this falty situation
-        return None, None, None
+        return np.zeros((ncells, ncells))
     else:
         mass_in_cells, xedges, yedges = np.histogram2d(pos[:, 0], pos[:, 1],
-                                                       bins=[Ncells, Ncells],
-                                                       #range=[[-0.5*Lbox, 0.5*Lbox],
-                                                       #       [-0.5*Lbox, 0.5*Lbox]],
+                                                       bins=[ncells, ncells],
                                                        weights=mass)
         ###################### Projected surface density ######################
         dx, dy = xedges[1]-xedges[0], yedges[1]-yedges[0]  #[Mpc]
-        Sigma = mass_in_cells/(dx*dy)      #[Msun/Mpc^2]
-        xs = 0.5*(xedges[1:]+xedges[:-1])  #[Mpc]
-        ys = 0.5*(yedges[1:]+yedges[:-1])  #[Mpc]
-        return Sigma, xs, ys
+        sigma = mass_in_cells/(dx*dy)  #[Msun/Mpc^2]
+        #pixelsmooth = 0.3/(xedges[1]-xedges[0])
+        #sigma = gaussian_filter(sigma, pixelsmooth, truncate=3)
+        return sigma
 
 
 @mpi_errchk
@@ -147,28 +235,29 @@ def create_density_maps():
     if comm_rank == 0:
         args["simdir"]       = sys.argv[1]
         args["hfdir"]        = sys.argv[2]
-        args["snapnum"]      = sys.argv[3]
-        args["ncells"]       = sys.argv[4]
+        args["snapnum"]      = int(sys.argv[3])
+        args["ncells"]       = int(sys.argv[4])
         args["outbase"]      = sys.argv[5]
         args["nfileout"]     = sys.argv[6]
     args = comm.bcast(args)
+    label = args["simdir"].split('/')[-2].split('_')[2]
    
     # Organize devision of Sub-&Halos over Processes on Proc. 0
     if comm_rank == 0:
         # Sort Sub-&Halos over Processes
-        df = pd.read_csv(args["hfdir"]+'halos_%s.dat' % args["snapnum"],
+        df = pd.read_csv(args["hfdir"]+'halos_%d.dat' % args["snapnum"],
                          sep='\s+', skiprows=16,
                          usecols=[0, 2, 4, 9, 10, 11],
                          names=['ID', 'Mvir', 'Vrms', 'X', 'Y', 'Z'])
-        df = df[df['Mvir'] > 1e11]
+        df = df[df['Mvir'] > 5e11]
         sh_id = df['ID'].values.astype('float64')
         sh_vrms = df['Vrms'].values.astype('float64')
         sh_x = df['X'].values.astype('float64')
         sh_y = df['Y'].values.astype('float64')
         sh_z = df['Z'].values.astype('float64')
         del df
-        sh_id, sh_vrms, sh_x, sh_y, sh_z, sh_split_size_1d, sh_split_disp_1d = cluster_subhalos(
-                sh_id, sh_vrms, sh_x, sh_y, sh_z, comm_size)
+        hist_edges =  histedges_equalN(sh_x, comm_size)
+        sh_id, sh_vrms, sh_x, sh_y, sh_z, sh_split_size_1d, sh_split_disp_1d = cluster_subhalos(sh_id, sh_vrms, sh_x, sh_y, sh_z, hist_edges, comm_size)
         
         # Sort Particles over Processes
         s = read_hdf5.snapshot(args["snapnum"], args["simdir"])
@@ -180,34 +269,35 @@ def create_density_maps():
         dm_x = (s.data['Coordinates']['dm'][:, 0]*scale).astype('float64')
         dm_y = (s.data['Coordinates']['dm'][:, 1]*scale).astype('float64')
         dm_z = (s.data['Coordinates']['dm'][:, 2]*scale).astype('float64')
-    
         dm_mass, dm_x, dm_y, dm_z, dm_split_size_1d, dm_split_disp_1d = cluster_particles(
-                dm_mass, dm_x, dm_y, dm_z, comm_size)
+                dm_mass, dm_x, dm_y, dm_z, hist_edges, comm_size)
         ## Gas
         gas_mass = (s.data['Masses']['gas']).astype('float64')
         gas_x = (s.data['Coordinates']['gas'][:, 0]*scale).astype('float64')
         gas_y = (s.data['Coordinates']['gas'][:, 1]*scale).astype('float64')
         gas_z = (s.data['Coordinates']['gas'][:, 2]*scale).astype('float64')
-        gas_mass, gas_x, gas_y, gas_z, gas_split_size_1d, gas_split_disp_1d = cluster_particles(
-                gas_mass, gas_x, gas_y, gas_z, comm_size)
+        gas_mass, gas_x, gas_y, gas_z, gas_split_size_1d, gas_split_disp_1d = cluster_particles(gas_mass, gas_x, gas_y, gas_z, hist_edges, comm_size)
         ## Stars
         star_mass = (s.data['Masses']['stars']).astype('float64')
         star_x = (s.data['Coordinates']['stars'][:, 0]*scale).astype('float64')
         star_y = (s.data['Coordinates']['stars'][:, 1]*scale).astype('float64')
         star_z = (s.data['Coordinates']['stars'][:, 2]*scale).astype('float64')
         star_age = s.data['GFM_StellarFormationTime']['stars']
-        star_x = star_x[star_age >= 0]*scale  #[Mpc]
-        star_y = star_y[star_age >= 0]*scale  #[Mpc]
-        star_z = star_z[star_age >= 0]*scale  #[Mpc]
+        star_x = star_x[star_age >= 0]  #[Mpc]
+        star_y = star_y[star_age >= 0]  #[Mpc]
+        star_z = star_z[star_age >= 0]  #[Mpc]
         star_mass = star_mass[star_age >= 0]
         del star_age
-        star_mass, star_x, star_y, star_z, star_split_size_1d, star_split_disp_1d = cluster_particles(
-                star_mass, star_x, star_y, star_z, comm_size)
+        star_mass, star_x, star_y, star_z, star_split_size_1d, star_split_disp_1d = cluster_particles(star_mass, star_x, star_y, star_z, hist_edges, comm_size)
 
         # Define Cosmology
         cosmo = LambdaCDM(H0=s.header.hubble*100,
                           Om0=s.header.omega_m,
                           Ode0=s.header.omega_l)
+        cosmosim = {'omega_M_0' : s.header.omega_m,
+                    'omega_lambda_0' : s.header.omega_l,
+                    'omega_k_0' : 0.0,
+                    'h' : s.header.hubble}
         redshift = s.header.redshift
     else:
         sh_id=None; sh_vrms=None; sh_x=None; sh_y=None; sh_z=None
@@ -218,7 +308,7 @@ def create_density_maps():
         gas_split_size_1d=None; gas_split_disp_1d=None
         star_mass=None; star_x=None; star_y=None; star_z=None
         star_split_size_1d=None; star_split_disp_1d=None
-        cosmo=None; redshift=None
+        cosmosim=None; cosmo=None; redshift=None
       
     # Broadcast variables over all processors
     sh_split_size_1d = comm.bcast(sh_split_size_1d, root=0)
@@ -289,73 +379,70 @@ def create_density_maps():
                   star_z_local, root=0)
     comm.Scatterv([star_mass, star_split_size_1d, star_split_disp_1d, MPI.DOUBLE],
                   star_mass_local,root=0)
-
+    print(': Redshift: %f' % redshift)
     print(': Proc. %d got: \n\t %d Sub-&Halos \n\t %d dark matter \n\t %d gas \n\t %d stars \n' % (comm_rank, int(sh_split_size_1d[comm_rank]), int(dm_split_size_1d[comm_rank]), int(gas_split_size_1d[comm_rank]), int(star_split_size_1d[comm_rank])))
-    
+
+    comm.Barrier()
+
     SH = {"ID"   : sh_id_local,
           "Vrms" : sh_vrms_local,
           "Pos"  : np.transpose([sh_x_local, sh_y_local, sh_z_local])}
-    DM = {"Mass"  : dm_mass_local,
+    DM = {"Mass"  : np.unique(dm_mass_local),
           "Pos" : np.transpose([dm_x_local, dm_y_local, dm_z_local])}
     Gas = {"Mass"  : gas_mass_local,
            "Pos" : np.transpose([gas_x_local, gas_y_local, gas_z_local])}
     Star = {"Mass"  : star_mass_local,
             "Pos" : np.transpose([star_x_local, star_y_local, star_z_local])}
     
-    sigma_tot=[]; subhalo_id=[]
+    sigma_tot=[]; subhalo_id=[]; FOV=[]
     ## Run over Sub-&Halos
     for ll in range(len(SH['ID'])):
-        print('Proc. %d analysing subhalo nr. %d' % (comm_rank, ll))
         # Define field-of-view
         c = (const.c).to_value('km/s')
         fov_rad = 4*np.pi*(SH['Vrms'][ll]/c)**2
+        #TODO: for z=0 sh_dist=0!!!
         sh_dist = (cosmo.comoving_distance(redshift)).to_value('Mpc')
-        fov_Mpc = 4*fov_rad*sh_dist  # multiplied by 4 because of Oguri&Marshall
+        alpha = 6  # multiplied by 4 because of Oguri&Marshall
+        fov_Mpc = alpha*fov_rad*sh_dist  # is it the diameter?
+        
+        dm_sigma, h = DMf.projected_surface_density_smooth(
+                DM['Pos'],   #[Mpc]
+                SH['Pos'][ll],
+                fov_Mpc,  #[Mpc]
+                args["ncells"])
+        dm_sigma *= DM['Mass']
+        gas_sigma = projected_surface_density(
+                Gas['Pos'], #*a/h,
+                Gas['Mass'],
+                SH['Pos'][ll], #*a/h,
+                fov_Mpc,
+                args["ncells"])
+        gas_sigma = gaussian_filter(gas_sigma, sigma=h)
+        star_sigma = projected_surface_density(
+                Star['Pos'], #*a/h,
+                Star['Mass'],
+                SH['Pos'][ll], #*a/h,
+                fov_Mpc,
+                args["ncells"])
+        star_sigma = gaussian_filter(star_sigma, sigma=h)
 
-        dm_sigma, xs, ys = projected_surface_density(DM['Pos'],   #[Mpc]
-                                                     DM['Mass'],
-                                                     SH['Pos'][ll],
-                                                     fov=fov_Mpc,  #[Mpc]
-                                                     bins=int(args["ncells"]),
-                                                     smooth=False,
-                                                     smooth_fac=0.5,
-                                                     neighbour_no=32)
-        if dm_sigma is None: continue
-        gas_sigma, xs, ys = projected_surface_density(Gas['Pos'], #*a/h,
-                                                      Gas['Mass'],
-                                                      SH['Pos'][ll], #*a/h,
-                                                      fov=fov_Mpc,
-                                                      bins=int(args["ncells"]),
-                                                      smooth=False,
-                                                      smooth_fac=0.5,
-                                                      neighbour_no=32)
-        if gas_sigma is None: continue
-        star_sigma, xs, ys = projected_surface_density(Star['Pos'], #*a/h,
-                                                       Star['Mass'],
-                                                       SH['Pos'][ll], #*a/h,
-                                                       fov=fov_Mpc,
-                                                       bins=int(args["ncells"]),
-                                                       smooth=False,
-                                                       smooth_fac=0.5,
-                                                       neighbour_no=8)
-        if star_sigma is None: continue
-
-        # point sources need to be smoothed by > 1 pixel to avoid artefacts
-        #sigma_tot.append(dm_sigma+gas_sigma+star_sigma)
-        sigma_tot.append(gaussian_filter(dm_sigma+gas_sigma+star_sigma, sigma=3))
-        subhalo_id.append(SH['ID'][ll])
-
-        #if (ll % 1000 == 0) and (ll != 0):
-        #    hf = h5py.File('./'+sim_phy[sim]+sim_name[sim]+'/DM_'+sim_name[sim]+'_' +str(ll)+'.h5', 'w')
-        #    hf.create_dataset('density_map', data=np.asarray(sigma_tot))
-        #    hf.create_dataset('subhalo_id', data=np.asarray(subhalo_id))
-        #    hf.close()
-        #    sigma_tot=[]; subhalo_id=[]
-    label = sim_name[sim].split('_')[2]
-    fname = './'+sim_phy[sim]+sim_name[sim]+'/DM_'+label+'_'+str(comm_rank)+'.h5'
+        # Check if all density maps are empty
+        if ((np.count_nonzero(dm_sigma) == args["ncells"]**2) and
+                (np.count_nonzero(gas_sigma) == (args["ncells"])**2) and
+                (np.count_nonzero(star_sigma) == (args["ncells"])**2)):
+            continue
+        sigmatotal = dm_sigma+gas_sigma+star_sigma
+        
+        sigma_tot.append(sigmatotal)
+        subhalo_id.append(int(SH['ID'][ll]))
+        FOV.append(fov_Mpc)
+    
+    fname = args["outbase"]+'z_'+str(args["snapnum"])+'/'+'DM_'+label+'_'+str(comm_rank)+'.h5'
     hf = h5py.File(fname, 'w')
-    hf.create_dataset('density_map', data=np.asarray(sigma_tot))
+    hf.create_dataset('density_map', data=sigma_tot)
     hf.create_dataset('subhalo_id', data=np.asarray(subhalo_id))
+    hf.create_dataset('fov_width', data=np.asarray(FOV))
+    #RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
     hf.close()
 
 
