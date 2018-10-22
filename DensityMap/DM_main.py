@@ -299,6 +299,7 @@ def create_density_maps():
                     'omega_k_0' : 0.0,
                     'h' : s.header.hubble}
         redshift = s.header.redshift
+        print(': Redshift: %f' % redshift)
     else:
         sh_id=None; sh_vrms=None; sh_x=None; sh_y=None; sh_z=None
         sh_split_size_1d=None; sh_split_disp_1d=None
@@ -379,7 +380,6 @@ def create_density_maps():
                   star_z_local, root=0)
     comm.Scatterv([star_mass, star_split_size_1d, star_split_disp_1d, MPI.DOUBLE],
                   star_mass_local,root=0)
-    print(': Redshift: %f' % redshift)
     print(': Proc. %d got: \n\t %d Sub-&Halos \n\t %d dark matter \n\t %d gas \n\t %d stars \n' % (comm_rank, int(sh_split_size_1d[comm_rank]), int(dm_split_size_1d[comm_rank]), int(gas_split_size_1d[comm_rank]), int(star_split_size_1d[comm_rank])))
 
     comm.Barrier()
