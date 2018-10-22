@@ -4,7 +4,7 @@
 # nodeIndex key to identify the halos & subhalos
 # ulimit -a (report limits) (e.g. -n -s -q hard)
 
-#SBATCH -t 3:00:00
+#SBATCH -t 20:00:00
 #SBATCH -J GRLAz40
 #SBATCH -o GRLAz40.out
 #SBATCH -e GRLAz40.err
@@ -18,7 +18,8 @@ ulimit -q hard
 
 # Load Module
 module purge
-module load python/2.7.15 gnu_comp/7.3.0 openmpi fftw/3.3.7
+module load python/2.7.15 intel_comp/2018 intel_mpi/2018 fftw valgrind
+#module load python/2.7.15 gnu_comp/7.3.0 openmpi fftw/3.3.7
 
 snapnum=40
 ncells=1024
@@ -27,13 +28,14 @@ dmbase=/cosma5/data/dp004/dc-beck3/StrongLensing/DensityMap/full_physics/L62_N51
 outbase=/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/full_physics/Rockstar/L62_N512_GR_kpc/Box/
 nproc="$(find /cosma5/data/dp004/dc-beck3/StrongLensing/DensityMap/full_physics/L62_N512_GR_kpc/z_${snapnum}/*.h5 -type f -size +4M | wc -l)"
 # nproc="$(ls -lR /cosma5/data/dp004/dc-beck3/StrongLensing/DensityMap/full_physics/L62_N512_GR_kpc/*.h5 | wc -l)"
-
 echo "Start process with $nproc cpus"
 
 # Execute script
+#python -u ./LM_main.py $snapnum $ncells $simdir $dmbase $outbase
+valgrind --log-file="valgrind_output.txt" python LM_main.py
+
 #mpirun -np 1 python3 ./LM_main_mpi.py \
 #python3 -u -X faulthandler ./LM_main.py $snapnum $ncells $simdir $dmbase $outbase
-python -u ./LM_main.py $snapnum $ncells $simdir $dmbase $outbase
 
 #echo "run LM_main_mpi.py $simdir $dmbase $snapnum $ncells $outbase" > gdb.in
 #mpirun -np 1 xterm -e "gdb -x gdb.in python3"

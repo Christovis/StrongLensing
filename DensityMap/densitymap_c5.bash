@@ -2,11 +2,10 @@
 # This script runs the python files to create one hdf5 file of the SubFind
 # in an ordere according to the DHhalo merger tree outputs with added
 # nodeIndex key to identify the halos & subhalos
-# SBATCH --ntasks 
 
-#SBATCH --nodes 2
-#SBATCH --tasks-per-node=16
-#SBATCH -t 46:00:00
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=15
+#SBATCH -t 40:00:00
 #SBATCH -J F5DMz35 
 #SBATCH -o F5DMz35.out
 #SBATCH -e F5DMz35.err
@@ -26,6 +25,7 @@ gridres=1024
 outbase=/cosma5/data/dp004/dc-beck3/StrongLensing/DensityMap/full_physics/L62_N512_${simname}_kpc/
 nfileout=10
 
+# echo $SLURM_NTASKS
 # Execute script
-mpirun -np $SLURM_NTASKS python3 ./DM_main.py \
+mpirun -np 20 python3 ./DM_main.py \
     $simdir $halofinderdir $snapnum $gridres $outbase $nfileout
