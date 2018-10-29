@@ -9,10 +9,10 @@ from astropy import units as u
 from astropy import constants as const
 from astropy.cosmology import LambdaCDM
 import pandas as pd
-import testdensitymap as tmap
+#import testdensitymap as tmap
 #import density_maps as dmap
 import matplotlib as mpl
-#mpl.use('Agg')
+mpl.use('Agg')
 import matplotlib.pyplot as plt
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import read_hdf5
@@ -364,10 +364,10 @@ def create_density_maps():
                                   (fov_arc-dsx_arc)/2, ncells[cc])
                 lp1, lp2 = np.meshgrid(lpv, lpv)  #[arcsec]
 
-                # Calculate convergence map
-                kappa = tot_sigma/sigma_cr
                 fig = plt.figure()
                 ax = fig.add_subplot(111)
+                # Calculate convergence map
+                kappa = tot_sigma/sigma_cr
                 
                 # Calculate Deflection Maps
                 alpha1,alpha2,mu_map,phi,detA,lambda_t = cal_lensing_signals(kappa,
@@ -378,7 +378,7 @@ def create_density_maps():
                                                   zl, cosmo, ax, 'med', ll)
                 #print('Rein = %f' % Rein[ll, cc, mm])
                 ID[ll] = SH['ID'][ll]
-                plt.close(fig)
+                #plt.close(fig)
     output = {}
     for cc in range(len(ncells)):
         for mm in range(len(nparts)):
@@ -388,6 +388,7 @@ def create_density_maps():
     #self.df = pd.concat([self.df, dfp], axis=1)
     fname = 'DMConvTest_'+label+'_'+str(comm_rank)+'_zs150.h5'
     df.to_hdf(fname, key='Rein', mode='w')
+    plt.close(fig)
 
 if __name__ == "__main__":
     create_density_maps()
