@@ -17,14 +17,8 @@ import read_hdf5
 sys.path.insert(0, './lib/')
 import process_division as procdiv
 import density_maps as dmaps
-
-# MPI initialisation
-from mpi4py import MPI
-comm = MPI.COMM_WORLD
-comm_rank = comm.Get_rank()
-comm_size = comm.Get_size()
-
-from mpi_errchk import mpi_errchk
+#sys.path.insert(0, './test/')
+#import testdensitymap as tmap
 
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, append=1)
@@ -51,9 +45,8 @@ def create_density_maps():
     args["ncells"]       = int(sys.argv[4])
     args["walltime"]       = int(sys.argv[5])
     args["outbase"]      = sys.argv[6]
-    args = comm.bcast(args)
     label = args["simdir"].split('/')[-2].split('_')[2]
-   
+    lclabel = args["lcdir"].split('/')[-1][-4]
     # Characteristics
     hflabel = whichhalofinder(args["lcdir"])
 
@@ -73,19 +66,20 @@ def create_density_maps():
     snapshots = dfhalo.groupby('snapnum').count().index.values
     dfhalo = dfhalo.sort_values(by=['snapnum'])
 
-    sigma_tot=[]; hf_id=[]; lc_id=[]; FOV=[]
+    sigma_tot=[]; out_hfid=[]; out_lcid=[]; out_redshift=[]; out_snapnum=[]
+    out_vrms=[]; out_fov=[]
 
     ## Run over Snapshots
-    for ss in range(len(nhalo_per_snapshot))[:1]:
+    for ss in range(len(nhalo_per_snapshot)):
         print('Snapshot %d of %d' % (ss, len(nhalo_per_snapshot)))
         dfhalosnap = dfhalo.loc[dfhalo['snapnum'] == snapshots[ss]]
         
         # Load simulation
         s = read_hdf5.snapshot(snapshots[ss], args["simdir"])
         s.read(["Coordinates", "Masses", "GFM_StellarFormationTime"],
-               parttype=[0, 1, 4])
+               parttype=[0, 1, 4, 5])
         scale = 1e-3*s.header.hubble
-        print(': Redshift: %f' % redshift)
+        print(': Redshift: %f' % s.header.redshift)
         
         ## Dark Matter
         DM = {'Mass' : (s.data['Masses']['dm']).astype('float64'),
@@ -97,9 +91,13 @@ def create_density_maps():
         age = (s.data['GFM_StellarFormationTime']['stars']).astype('float64')
         Star = {'Mass' : (s.data['Masses']['stars'][age >= 0]).astype('float64'),
                 'Pos' : (s.data['Coordinates']['stars'][age >= 0, :]*scale).astype('float64')}
+        del age
+        ## BH
+        BH = {'Mass' : (s.data['Masses']['bh']).astype('float64'),
+              'Pos' : (s.data['Coordinates']['bh']*scale).astype('float64')}
         
         ## Run over Sub-&Halos
-        for ll in range(len(dfhalosnap.index))[:3]:
+        for ll in range(len(dfhalosnap.index)):
             print('Lens %d of %d' % (ll, len(dfhalosnap.index)))
             #TODO: for z=0 sh_dist=0!!!
             
@@ -111,75 +109,80 @@ def create_density_maps():
                         'omega_lambda_0' : s.header.omega_l,
                         'omega_k_0' : 0.0,
                         'h' : s.header.hubble}
-            redshift = s.header.redshift
             
-            smlpixel = 20  # maximum smoothing pixel length
+            smlpixel = 10  # maximum smoothing pixel length
             shpos = dfhalosnap.filter(regex='HaloPosBox').iloc[ll].values
-            dmap_start = time.time()
-            indx = dmaps.select_particles(Gas['Pos'],
-                                          shpos, #*a/h,
-                                          dfhalosnap['fov_Mpc'].values[ll],
-                                          'box')
+            #time_start = time.time()
+            ## BH
+            pos, indx = dmaps.select_particles(
+                    BH['Pos'], shpos, #*a/h,
+                    dfhalosnap['fov_Mpc'].values[ll], 'box')
+            bh_sigma = dmaps.projected_density_pmesh(
+                    pos, BH['Mass'][indx],
+                    dfhalosnap['fov_Mpc'].values[ll],
+                    args["ncells"])
+            ## Star
+            pos, indx = dmaps.select_particles(
+                    Gas['Pos'], shpos, #*a/h,
+                    dfhalosnap['fov_Mpc'].values[ll], 'box')
             gas_sigma = dmaps.projected_density_pmesh_adaptive(
-                    Gas['Pos'][indx,:], Gas['Mass'][indx],
+                    pos, Gas['Mass'][indx],
                     dfhalosnap['fov_Mpc'].values[ll],
                     args["ncells"],
-                    hmax=smlpixel,
-                    particle_type=0)
-            indx = dmaps.select_particles(Star['Pos'],
-                                          shpos,  #*a/h
-                                          dfhalosnap['fov_Mpc'].values[ll],
-                                          'box')
+                    hmax=smlpixel)
+            ## Gas
+            pos, indx = dmaps.select_particles(
+                    Star['Pos'], shpos,  #*a/h
+                    dfhalosnap['fov_Mpc'].values[ll], 'box')
             star_sigma = dmaps.projected_density_pmesh_adaptive(
-                    Star['Pos'][indx,:],Star['Mass'][indx],
+                    pos, Star['Mass'][indx],
                     dfhalosnap['fov_Mpc'].values[ll],
                     args["ncells"],
-                    hmax=smlpixel,
-                    particle_type=4)
-            indx = dmaps.select_particles(DM['Pos'],
-                                          shpos,  #*a/h
-                                          dfhalosnap['fov_Mpc'].values[ll],
-                                          'box')
+                    hmax=smlpixel)
+            ## DM
+            pos, indx = dmaps.select_particles(
+                    DM['Pos'], shpos,  #*a/h
+                    dfhalosnap['fov_Mpc'].values[ll],  'box')
             dm_sigma = dmaps.projected_density_pmesh_adaptive(
-                    DM['Pos'][indx,:], DM['Mass'][indx],
+                    pos, DM['Mass'][indx],
                     dfhalosnap['fov_Mpc'].values[ll],  #[Mpc]
                     args["ncells"],
-                    hmax=smlpixel,
-                    particle_type=1)
-            sigmatotal = dm_sigma+gas_sigma+star_sigma
-            print('density map creation took %f sec.' % (time.time() - dmap_start))
+                    hmax=smlpixel)
+            sigmatotal = dm_sigma+gas_sigma+star_sigma+bh_sigma
 
 
             # Make sure that density-map if filled
             while 0.0 in sigmatotal:
                 smlpixel += 5
                 dm_sigma = dmaps.projected_density_pmesh_adaptive(
-                        DM['Pos'][indx,:], DM['Mass'][indx],
+                        pos, DM['Mass'][indx],
                         dfhalosnap['fov_Mpc'].values[ll],  #[Mpc]
                         args["ncells"],
-                        hmax=smlpixel,
-                        particle_type=1)
-                sigmatotal = dm_sigma+gas_sigma+star_sigma
-        
+                        hmax=smlpixel)
+                sigmatotal = dm_sigma+gas_sigma+star_sigma+bh_sigma
+            #print(':: :: :: DM took %f seconds' % (time.time() - time_start))
+            #tmap.plotting(sigmatotal, args["ncells"],
+            #              dfhalosnap['fov_Mpc'].values[ll], dfhalosnap['Halo_z'].values[ll])
+
             sigma_tot.append(sigmatotal)
-            hf_id.append(dfhalosnap['HF_ID'].values[ll])
-            lc_id.append(dfhalosnap['ID'].values[ll])
-            FOV.append(dfhalosnap['fov_Mpc'].values[ll])
+            out_hfid.append(dfhalosnap['HF_ID'].values[ll])
+            out_lcid.append(dfhalosnap['ID'].values[ll])
+            out_fov.append(dfhalosnap['fov_Mpc'].values[ll])
             if args["walltime"] - (time_start - time.time())/(60*60) < 0.25:
-                fname = args["outbase"]+'DM_'+label+'_lc.h5'
+                fname = args["outbase"]+'DM_'+label+'_lc'+str(lclabel)+'.h5'
                 hf = h5py.File(fname, 'w')
                 hf.create_dataset('density_map', data=sigma_tot)
-                hf.create_dataset('HF_ID', data=np.asarray(hf_id))
-                hf.create_dataset('LC_ID', data=np.asarray(lc_id))
-                hf.create_dataset('fov_Mpc', data=np.asarray(FOV))
+                hf.create_dataset('HF_ID', data=np.asarray(out_hfid))
+                hf.create_dataset('LC_ID', data=np.asarray(out_lcid))
+                hf.create_dataset('fov_Mpc', data=np.asarray(out_fov))
                 hf.close()
     
-    fname = args["outbase"]+'DM_'+label+'_lc.h5'
+    fname = args["outbase"]+'DM_'+label+'_lc_'+str(lclabel)+'.h5'
     hf = h5py.File(fname, 'w')
     hf.create_dataset('density_map', data=sigma_tot)
-    hf.create_dataset('HF_ID', data=np.asarray(hf_id))
-    hf.create_dataset('LC_ID', data=np.asarray(lc_id))
-    hf.create_dataset('fov_Mpc', data=np.asarray(FOV))
+    hf.create_dataset('HF_ID', data=np.asarray(out_hfid))
+    hf.create_dataset('LC_ID', data=np.asarray(out_lcid))
+    hf.create_dataset('fov_Mpc', data=np.asarray(out_fov))
     #RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
     hf.close()
 

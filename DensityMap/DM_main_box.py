@@ -91,56 +91,43 @@ def create_density_maps():
 
         # Sort Particles over Processes
         ## Dark Matter
-        dm_mass = (s.data['Masses']['dm']).astype('float64')
-        dm_x = (s.data['Coordinates']['dm'][:, 0]*scale).astype('float64')
-        dm_y = (s.data['Coordinates']['dm'][:, 1]*scale).astype('float64')
-        dm_z = (s.data['Coordinates']['dm'][:, 2]*scale).astype('float64')
-        dm_mass, dm_x, dm_y, dm_z, dm_split_size_1d, dm_split_disp_1d = procdiv.cluster_particles(
-                dm_mass, dm_x, dm_y, dm_z, hist_edges, comm_size)
+        DM = {'Mass' : (s.data['Masses']['dm']).astype('float64'),
+              'Pos' : (s.data['Coordinates']['dm']*scale).astype('float64')}
+        DM = procdiv.cluster_particles(DM, hist_edges, comm_size)
         ## Gas
-        gas_mass = (s.data['Masses']['gas']).astype('float64')
-        gas_x = (s.data['Coordinates']['gas'][:, 0]*scale).astype('float64')
-        gas_y = (s.data['Coordinates']['gas'][:, 1]*scale).astype('float64')
-        gas_z = (s.data['Coordinates']['gas'][:, 2]*scale).astype('float64')
-        gas_mass, gas_x, gas_y, gas_z, gas_split_size_1d, gas_split_disp_1d = procdiv.cluster_particles(gas_mass, gas_x, gas_y, gas_z, hist_edges, comm_size)
+        Gas = {'Mass' : (s.data['Masses']['gas']).astype('float64'),
+               'Pos' : (s.data['Coordinates']['gas']*scale).astype('float64')}
+        Gas = procdiv.cluster_particles(Gas, hist_edges, comm_size)
         ## Stars
-        star_mass = (s.data['Masses']['stars']).astype('float64')
-        star_x = (s.data['Coordinates']['stars'][:, 0]*scale).astype('float64')
-        star_y = (s.data['Coordinates']['stars'][:, 1]*scale).astype('float64')
-        star_z = (s.data['Coordinates']['stars'][:, 2]*scale).astype('float64')
-        star_age = s.data['GFM_StellarFormationTime']['stars']
-        star_x = star_x[star_age >= 0]  #[Mpc]
-        star_y = star_y[star_age >= 0]  #[Mpc]
-        star_z = star_z[star_age >= 0]  #[Mpc]
-        star_mass = star_mass[star_age >= 0]
-        del star_age
-        star_mass, star_x, star_y, star_z, star_split_size_1d, star_split_disp_1d = procdiv.cluster_particles(star_mass, star_x, star_y, star_z, hist_edges, comm_size)
+        age = (s.data['GFM_StellarFormationTime']['stars']).astype('float64')
+        Star = {'Mass' : (s.data['Masses']['stars'][age >= 0]).astype('float64'),
+                'Pos' : (s.data['Coordinates']['stars'][age >= 0, :]*scale).astype('float64')}
+        del age
+        Star = procdiv.cluster_particles(Star, hist_edges, comm_size)
         
-        split_size_1d = SH['split_size_1d']
-        split_disp_1d = SH['split_disp_1d']
+        #split_size_1d = SH['split_size_1d']
+        #split_disp_1d = SH['split_disp_1d']
     else:
         c=None; alpha=None; overlap=None
         cosmosim=None; cosmo=None; redshift=None; hist_edges=None;
-        #sh_id=None; sh_vrms=None; sh_x=None; sh_y=None; sh_z=None
-        #sh_split_size_1d=None; sh_split_disp_1d=None
         SH = {'ID':None, 'Vrms':None, 'X':None, 'Y':None, 'Z':None,
               'split_size_1d':None, 'split_disp_1d':None}
-        dm_mass=None; dm_x=None; dm_y=None; dm_z=None
-        dm_split_size_1d=None; dm_split_disp_1d=None
-        gas_mass=None; gas_x=None; gas_y=None; gas_z=None
-        gas_split_size_1d=None; gas_split_disp_1d=None
-        star_mass=None; star_x=None; star_y=None; star_z=None
-        star_split_size_1d=None; star_split_disp_1d=None
+        DM = {'Mass':None, 'X':None, 'Y':None, 'Z':None,
+              'split_size_1d':None, 'split_disp_1d':None}
+        Gas = {'Mass':None, 'X':None, 'Y':None, 'Z':None,
+               'split_size_1d':None, 'split_disp_1d':None}
+        Star = {'Mass':None, 'X':None, 'Y':None, 'Z':None,
+                'split_size_1d':None, 'split_disp_1d':None}
       
     # Broadcast variables over all processors
     sh_split_size_1d = comm.bcast(SH['split_size_1d'], root=0)
-    sh_split_disp_1d = comm.bcast(SH['split_disp_1d'], root=0)
-    dm_split_size_1d = comm.bcast(dm_split_size_1d, root=0)
-    dm_split_disp_1d = comm.bcast(dm_split_disp_1d, root=0)
-    gas_split_size_1d = comm.bcast(gas_split_size_1d, root=0)
-    gas_split_disp_1d = comm.bcast(gas_split_disp_1d, root=0)
-    star_split_size_1d = comm.bcast(star_split_size_1d, root=0)
-    star_split_disp_1d = comm.bcast(star_split_disp_1d, root=0)
+    #sh_split_disp_1d = comm.bcast(SH['split_disp_1d'], root=0)
+    dm_split_size_1d = comm.bcast(DM['split_size_1d'], root=0)
+    #dm_split_disp_1d = comm.bcast(DM['split_disp_1d'], root=0)
+    gas_split_size_1d = comm.bcast(Gas['split_size_1d'], root=0)
+    #gas_split_disp_1d = comm.bcast(Gas['split_disp_1d'], root=0)
+    star_split_size_1d = comm.bcast(Star['split_size_1d'], root=0)
+    #star_split_disp_1d = comm.bcast(Star['split_disp_1d'], root=0)
     c = comm.bcast(c, root=0)
     alpha = comm.bcast(alpha, root=0)
     overlap = comm.bcast(overlap, root=0)
@@ -148,76 +135,16 @@ def create_density_maps():
     redshift = comm.bcast(redshift, root=0)
     hist_edges = comm.bcast(hist_edges, root=0)
 
-    # Initiliaze variables for each processor
-    sh_id_local = np.zeros((int(sh_split_size_1d[comm_rank])))
-    sh_vrms_local = np.zeros((int(sh_split_size_1d[comm_rank])))
-    sh_x_local = np.zeros((int(sh_split_size_1d[comm_rank])))
-    sh_y_local = np.zeros((int(sh_split_size_1d[comm_rank])))
-    sh_z_local = np.zeros((int(sh_split_size_1d[comm_rank])))
-    dm_mass_local = np.zeros((int(dm_split_size_1d[comm_rank])))
-    dm_x_local = np.zeros((int(dm_split_size_1d[comm_rank])))
-    dm_y_local = np.zeros((int(dm_split_size_1d[comm_rank])))
-    dm_z_local = np.zeros((int(dm_split_size_1d[comm_rank])))
-    gas_mass_local = np.zeros((int(gas_split_size_1d[comm_rank])))
-    gas_x_local = np.zeros((int(gas_split_size_1d[comm_rank])))
-    gas_y_local = np.zeros((int(gas_split_size_1d[comm_rank])))
-    gas_z_local = np.zeros((int(gas_split_size_1d[comm_rank])))
-    star_mass_local = np.zeros((int(star_split_size_1d[comm_rank])))
-    star_x_local = np.zeros((int(star_split_size_1d[comm_rank])))
-    star_y_local = np.zeros((int(star_split_size_1d[comm_rank])))
-    star_z_local = np.zeros((int(star_split_size_1d[comm_rank])))
+    SH = procdiv.scatter_subhalos(SH, sh_split_size_1d,
+                                  comm_rank, comm, root_proc=0)
+    DM = procdiv.scatter_particles(DM, dm_split_size_1d,
+                                   comm_rank, comm, root_proc=0)
+    Gas = procdiv.scatter_particles(Gas, gas_split_size_1d,
+                                    comm_rank, comm, root_proc=0)
+    Star = procdiv.scatter_particles(Star, star_split_size_1d,
+                                     comm_rank, comm, root_proc=0)
     
-    # Devide Data over Processes
-    comm.Scatterv([SH['ID'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
-                  sh_id_local, root=0)
-    comm.Scatterv([SH['Vrms'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
-                  sh_vrms_local, root=0)
-    comm.Scatterv([SH['X'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
-                  sh_x_local,root=0) 
-    comm.Scatterv([SH['Y'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
-                  sh_y_local,root=0) 
-    comm.Scatterv([SH['Z'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
-                  sh_z_local,root=0) 
-    
-    comm.Scatterv([dm_x, dm_split_size_1d, dm_split_disp_1d, MPI.DOUBLE],
-                  dm_x_local, root=0) 
-    comm.Scatterv([dm_y, dm_split_size_1d, dm_split_disp_1d, MPI.DOUBLE],
-                  dm_y_local, root=0) 
-    comm.Scatterv([dm_z, dm_split_size_1d, dm_split_disp_1d, MPI.DOUBLE],
-                  dm_z_local, root=0) 
-    comm.Scatterv([dm_mass, dm_split_size_1d, dm_split_disp_1d, MPI.DOUBLE],
-                  dm_mass_local,root=0) 
-
-    comm.Scatterv([gas_x, gas_split_size_1d, gas_split_disp_1d, MPI.DOUBLE],
-                  gas_x_local, root=0) 
-    comm.Scatterv([gas_y, gas_split_size_1d, gas_split_disp_1d, MPI.DOUBLE],
-                  gas_y_local, root=0) 
-    comm.Scatterv([gas_z, gas_split_size_1d, gas_split_disp_1d, MPI.DOUBLE],
-                  gas_z_local, root=0) 
-    comm.Scatterv([gas_mass, gas_split_size_1d, gas_split_disp_1d, MPI.DOUBLE],
-                  gas_mass_local,root=0) 
-
-    comm.Scatterv([star_x, star_split_size_1d, star_split_disp_1d, MPI.DOUBLE],
-                  star_x_local, root=0)
-    comm.Scatterv([star_y, star_split_size_1d, star_split_disp_1d, MPI.DOUBLE],
-                  star_y_local, root=0)
-    comm.Scatterv([star_z, star_split_size_1d, star_split_disp_1d, MPI.DOUBLE],
-                  star_z_local, root=0)
-    comm.Scatterv([star_mass, star_split_size_1d, star_split_disp_1d, MPI.DOUBLE],
-                  star_mass_local,root=0)
     print(': Proc. %d got: \n\t %d Sub-&Halos \n\t %d dark matter \n\t %d gas \n\t %d stars \n' % (comm_rank, int(sh_split_size_1d[comm_rank]), int(dm_split_size_1d[comm_rank]), int(gas_split_size_1d[comm_rank]), int(star_split_size_1d[comm_rank])))
-
-    comm.Barrier()
-
-    SH = {"ID"   : sh_id_local,
-          "Vrms" : sh_vrms_local,
-          "Pos"  : np.transpose([sh_x_local, sh_y_local, sh_z_local])}
-    DM = {"Mass"  : dm_mass_local,
-          "Pos" : np.transpose([dm_x_local, dm_y_local, dm_z_local])}
-    Gas = {"Mass"  : gas_mass_local,
-           "Pos" : np.transpose([gas_x_local, gas_y_local, gas_z_local])}
-    Star = {"Mass"  : star_mass_local,
-            "Pos" : np.transpose([star_x_local, star_y_local, star_z_local])}
     
     sigma_tot=[]; subhalo_id=[]; FOV=[]
     ## Run over Sub-&Halos
@@ -239,42 +166,43 @@ def create_density_maps():
                 continue
 
         smlpixel = 20  # maximum smoothing pixel length
-        indx = dmaps.select_particles(Gas['Pos'], SH['Pos'][ll], fov_Mpc, 'box')
+        ## Gas
+        pos, indx = dmaps.select_particles(
+                Gas['Pos'], SH['Pos'][ll], #*a/h,
+                fov_Mpc, 'box')
         gas_sigma = dmaps.projected_density_pmesh_adaptive(
-                Gas['Pos'][indx,:], Gas['Mass'][indx],
-                SH['Pos'][ll], #*a/h,
+                pos, Gas['Mass'][indx],
                 fov_Mpc,
                 args["ncells"],
-                hmax=smlpixel,
-                particle_type=0)
-        indx = dmaps.select_particles(Star['Pos'], SH['Pos'][ll], fov_Mpc, 'box')
+                hmax=smlpixel)
+        ## Star
+        pos, indx = dmaps.select_particles(
+                Star['Pos'], SH['Pos'][ll], #*a/h,
+                fov_Mpc, 'box')
         star_sigma = dmaps.projected_density_pmesh_adaptive(
-                Star['Pos'][indx,:],Star['Mass'][indx],
-                SH['Pos'][ll], #*a/h,
+                pos, Star['Mass'][indx],
                 fov_Mpc,
                 args["ncells"],
-                hmax=smlpixel,
-                particle_type=4)
-        indx = dmaps.select_particles(DM['Pos'], SH['Pos'][ll], fov_Mpc, 'box')
+                hmax=smlpixel)
+        ## DM
+        pos, indx = dmaps.select_particles(
+                DM['Pos'], SH['Pos'][ll], #*a/h,
+                fov_Mpc, 'box')
         dm_sigma = dmaps.projected_density_pmesh_adaptive(
-                DM['Pos'][indx,:], DM['Mass'][indx],
-                SH['Pos'][ll],
-                fov_Mpc,  #[Mpc]
+                pos, DM['Mass'][indx],
+                fov_Mpc,
                 args["ncells"],
-                hmax=smlpixel,
-                particle_type=1)
+                hmax=smlpixel)
         sigmatotal = dm_sigma+gas_sigma+star_sigma
        
         # Make sure that density-map if filled
         while 0.0 in sigmatotal:
             smlpixel += 5
             dm_sigma = dmaps.projected_density_pmesh_adaptive(
-                    DM['Pos'][indx,:], DM['Mass'][indx],
-                    SH['Pos'][ll],
-                    fov_Mpc,  #[Mpc]
+                    pos, DM['Mass'][indx],
+                    fov_Mpc,
                     args["ncells"],
-                    hmax=smlpixel,
-                    particle_type=1)
+                    hmax=smlpixel)
             sigmatotal = dm_sigma+gas_sigma+star_sigma
 
 

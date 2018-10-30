@@ -16,19 +16,19 @@ from matplotlib import rc
 from mypmesh import pm as mesh
 
 
-def select_particles(_pos, _centre, _width, _regiontype='box'):
-    _pos = _pos - _centre
+def select_particles(pos, _centre, _width, _regiontype='box'):
+    pos = pos - _centre
     if _regiontype == 'box':
-        _indx = np.logical_and(np.abs(_pos[:, 0]) < 0.5*_width,
-                               np.abs(_pos[:, 1]) < 0.5*_width,
-                               np.abs(_pos[:, 2]) < 0.5*_width)
-        _indx = np.where(_indx)[0]
+        indx = np.logical_and(np.abs(pos[:, 0]) < 0.5*_width,
+                               np.abs(pos[:, 1]) < 0.5*_width,
+                               np.abs(pos[:, 2]) < 0.5*_width)
+        indx = np.where(indx)[0]
     elif _regiontype == 'sphere':
         _dist = np.sqrt(_pos[:, 0]**2 +
                         _pos[:, 1]**2 +
                         _pos[:, 2]**2)
-        _indx = np.where(_dist <= 0.5*_width)[0]
-    return _indx
+        indx = np.where(_dist <= 0.5*_width)[0]
+    return pos[indx, :], indx
 
 
 
@@ -113,25 +113,25 @@ def projected__density_gauss_adaptive(pos, mass, centre, fov, ncells,
         return sigma
 
 
-def projected_density_pmesh(pos,mass,centre,fov,bins,window='tsc',projection_axis=2):
-    pm = mesh.ParticleMesh(Nmesh = [bins,bins], BoxSize=fov)
-    pos = pos-centre + np.ones(3)*0.5*fov
+def projected_density_pmesh(pos, mass, fov, ncells, window='tsc',
+                            projection_axis=2):
+    dx = float(fov)/ncells
+    pos += np.ones(3)*0.5*fov
     axes = [0,1,2]
     axes.remove(projection_axis)
+    pm = mesh.ParticleMesh(Nmesh = [ncells,ncells], BoxSize=fov)
     mass2D =  pm.paint(pos[:,axes],mass=mass,resampler=window)
-    dx = float(fov)/bins
     Sigma = mass2D / (dx*dx)
-    xedges = np.linspace(-0.5*fov,0.5*fov,bins+1)
-    yedges = np.linspace(-0.5*fov,0.5*fov,bins+1)
-    xs = 0.5*(xedges[1:]+xedges[:-1])
-    ys = 0.5*(yedges[1:]+yedges[:-1])
-    return Sigma, xs, ys
+    #xedges = np.linspace(-0.5*fov,0.5*fov,bins+1)
+    #yedges = np.linspace(-0.5*fov,0.5*fov,bins+1)
+    #xs = 0.5*(xedges[1:]+xedges[:-1])
+    #ys = 0.5*(yedges[1:]+yedges[:-1])
+    return Sigma.value #, xs, ys
 
 
-def projected_density_pmesh_adaptive(pos, mass, centre, fov, ncells, hmax=10,
+def projected_density_pmesh_adaptive(pos, mass, fov, ncells, hmax=20,
                                      window='tsc', projection_axis=0,
-                                     smooth_fac=1.0, neighbour_no=32,
-                                     particle_type=1):
+                                     smooth_fac=1.0, neighbour_no=32):
     dx = float(fov)/ncells
     pos += np.ones(3)*0.5*fov
     X = np.copy(pos)
@@ -157,7 +157,7 @@ def projected_density_pmesh_adaptive(pos, mass, centre, fov, ncells, hmax=10,
     return Sigma.value #, xs, ys
 
 
-def projected_density_gauss(pos, centre, fov, ncells):
+def projected_density_gauss(pos, fov, ncells):
     """
     Input:
         pos: particle positions
