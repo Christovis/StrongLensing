@@ -181,7 +181,7 @@ def create_density_maps():
     hf = h5py.File(fname, 'w')
     hf.create_dataset('density_map', data=sigma_tot)
     hf.create_dataset('HF_ID', data=np.asarray(out_hfid))
-    hf.create_dataset('LC_ID', data=np.asarray(out_lcid))
+    hf.create_dataset('LC_ID', data=out_lcid)
     hf.create_dataset('fov_Mpc', data=np.asarray(out_fov))
     #RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
     hf.close()

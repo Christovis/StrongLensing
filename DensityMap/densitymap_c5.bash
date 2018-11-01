@@ -8,9 +8,9 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=3
 #SBATCH -t 40:00:00
-#SBATCH -J DM2lc 
-#SBATCH -o DM2lc.out
-#SBATCH -e DM2lc.err
+#SBATCH -J F6DM1lc 
+#SBATCH -o F6DM1lc.out
+#SBATCH -e F6DM1lc.err
 #SBATCH -p cosma
 #SBATCH -A durham
 #SBATCH --exclusive
@@ -19,7 +19,7 @@
 module purge
 module load gnu_comp/7.3.0 openmpi python/2.7.15
 
-simname=GR  #[GR, F6, F5,]
+simname=F6  #[GR, F6, F5,]
 format=Lightcone  #[Box, Lightcone]
 simdir=/cosma6/data/dp004/dc-arno1/SZ_project/full_physics/L62_N512_${simname}_kpc/
 halofinderdir=/cosma5/data/dp004/dc-beck3/rockstar/full_physics/L62_N512_${simname}_kpc/
