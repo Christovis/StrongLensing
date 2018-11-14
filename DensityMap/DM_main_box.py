@@ -3,7 +3,6 @@
 from __future__ import division
 import os, sys, logging
 from glob import glob
-import subprocess
 import numpy as np
 from sklearn.neighbors import KDTree
 import h5py
@@ -43,7 +42,8 @@ def create_density_maps():
         args["hfdir"]        = sys.argv[2]
         args["snapnum"]      = int(sys.argv[3])
         args["ncells"]       = int(sys.argv[4])
-        args["outbase"]      = sys.argv[5]
+        args["smlpixel"]       = int(sys.argv[5])
+        args["outbase"]      = sys.argv[6]
     args = comm.bcast(args)
     label = args["simdir"].split('/')[-2].split('_')[2]
    
@@ -72,14 +72,15 @@ def create_density_maps():
                          usecols=[0, 2, 4, 9, 10, 11],
                          names=['ID', 'Mvir', 'Vrms', 'X', 'Y', 'Z'])
         df = df[df['Mvir'] > 5e11]
-        sh_id = df['ID'].values.astype('float64')
+        sh_id = df['ID'].values.astype('float64') #for MPI.DOUBLE datatype
         sh_vrms = df['Vrms'].values.astype('float64')
         sh_x = df['X'].values.astype('float64')
         sh_y = df['Y'].values.astype('float64')
         sh_z = df['Z'].values.astype('float64')
         del df
         hist_edges =  procdiv.histedges_equalN(sh_x, comm_size)
-        SH = procdiv.cluster_subhalos(sh_id, sh_vrms, sh_x, sh_y, sh_z, hist_edges, comm_size)
+        SH = procdiv.cluster_subhalos(sh_id, sh_vrms, sh_x, sh_y, sh_z,
+                                      hist_edges, comm_size)
       
         # Calculate overlap for particle cuboids
         c = (const.c).to_value('km/s')
@@ -105,11 +106,9 @@ def create_density_maps():
         del age
         Star = procdiv.cluster_particles(Star, hist_edges, comm_size)
         
-        #split_size_1d = SH['split_size_1d']
-        #split_disp_1d = SH['split_disp_1d']
     else:
         c=None; alpha=None; overlap=None
-        cosmosim=None; cosmo=None; redshift=None; hist_edges=None;
+        cosmosim=None; cosmo=None; redshift=None; hist_edges=None
         SH = {'ID':None, 'Vrms':None, 'X':None, 'Y':None, 'Z':None,
               'split_size_1d':None, 'split_disp_1d':None}
         DM = {'Mass':None, 'X':None, 'Y':None, 'Z':None,
@@ -121,13 +120,13 @@ def create_density_maps():
       
     # Broadcast variables over all processors
     sh_split_size_1d = comm.bcast(SH['split_size_1d'], root=0)
-    #sh_split_disp_1d = comm.bcast(SH['split_disp_1d'], root=0)
+    sh_split_disp_1d = comm.bcast(SH['split_disp_1d'], root=0)
     dm_split_size_1d = comm.bcast(DM['split_size_1d'], root=0)
-    #dm_split_disp_1d = comm.bcast(DM['split_disp_1d'], root=0)
+    dm_split_disp_1d = comm.bcast(DM['split_disp_1d'], root=0)
     gas_split_size_1d = comm.bcast(Gas['split_size_1d'], root=0)
-    #gas_split_disp_1d = comm.bcast(Gas['split_disp_1d'], root=0)
+    gas_split_disp_1d = comm.bcast(Gas['split_disp_1d'], root=0)
     star_split_size_1d = comm.bcast(Star['split_size_1d'], root=0)
-    #star_split_disp_1d = comm.bcast(Star['split_disp_1d'], root=0)
+    star_split_disp_1d = comm.bcast(Star['split_disp_1d'], root=0)
     c = comm.bcast(c, root=0)
     alpha = comm.bcast(alpha, root=0)
     overlap = comm.bcast(overlap, root=0)
@@ -149,11 +148,11 @@ def create_density_maps():
     sigma_tot=[]; subhalo_id=[]; FOV=[]
     ## Run over Sub-&Halos
     for ll in range(len(SH['ID'])):
-        # Define field-of-view
+        # Define field-of-view edge-length
         fov_rad = 4*np.pi*(SH['Vrms'][ll]/c)**2
         #TODO: for z=0 sh_dist=0!!!
         sh_dist = (cosmo.comoving_distance(redshift)).to_value('Mpc')
-        fov_Mpc = alpha*fov_rad*sh_dist  #[Mpc] is it the diameter?
+        fov_Mpc = alpha*fov_rad*sh_dist  #[Mpc] edge-length of box
         
         # Check cuboid boundary condition,
         # that all surface densities are filled with particles
@@ -165,7 +164,6 @@ def create_density_maps():
                         (fov_Mpc*0.45, overlap))
                 continue
 
-        smlpixel = 20  # maximum smoothing pixel length
         ## Gas
         pos, indx = dmaps.select_particles(
                 Gas['Pos'], SH['Pos'][ll], #*a/h,
@@ -174,7 +172,7 @@ def create_density_maps():
                 pos, Gas['Mass'][indx],
                 fov_Mpc,
                 args["ncells"],
-                hmax=smlpixel)
+                hmax=args["smlpixel"])
         ## Star
         pos, indx = dmaps.select_particles(
                 Star['Pos'], SH['Pos'][ll], #*a/h,
@@ -183,7 +181,7 @@ def create_density_maps():
                 pos, Star['Mass'][indx],
                 fov_Mpc,
                 args["ncells"],
-                hmax=smlpixel)
+                hmax=args["smlpixel"])
         ## DM
         pos, indx = dmaps.select_particles(
                 DM['Pos'], SH['Pos'][ll], #*a/h,
@@ -192,17 +190,18 @@ def create_density_maps():
                 pos, DM['Mass'][indx],
                 fov_Mpc,
                 args["ncells"],
-                hmax=smlpixel)
+                hmax=args["smlpixel"])
         sigmatotal = dm_sigma+gas_sigma+star_sigma
        
         # Make sure that density-map if filled
-        while 0.0 in sigmatotal:
-            smlpixel += 5
+        extention = 0
+        while (0.0 in sigmatotal) and (extention < 60):
+            extention += 5
             dm_sigma = dmaps.projected_density_pmesh_adaptive(
                     pos, DM['Mass'][indx],
                     fov_Mpc,
                     args["ncells"],
-                    hmax=smlpixel)
+                    hmax=args["smlpixel"]+extention)
             sigmatotal = dm_sigma+gas_sigma+star_sigma
 
 
@@ -212,9 +211,9 @@ def create_density_maps():
     
     fname = args["outbase"]+'z_'+str(args["snapnum"])+'/'+'DM_'+label+'_'+str(comm_rank)+'.h5'
     hf = h5py.File(fname, 'w')
-    hf.create_dataset('density_map', data=sigma_tot)
-    hf.create_dataset('subhalo_id', data=np.asarray(subhalo_id))
-    hf.create_dataset('fov_width', data=np.asarray(FOV))
+    hf.create_dataset('DMAP', data=sigma_tot)              # density map
+    hf.create_dataset('HFID', data=np.asarray(subhalo_id)) # Rockstar sub-&halo id
+    hf.create_dataset('FOV', data=np.asarray(FOV))         # field-of-view
     #RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
     hf.close()
 

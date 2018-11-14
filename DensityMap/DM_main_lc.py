@@ -3,7 +3,6 @@
 from __future__ import division
 import os, sys, logging, time
 from glob import glob
-import subprocess
 import numpy as np
 import h5py
 import pandas as pd
@@ -53,8 +52,9 @@ def create_density_maps():
     # Load LightCone Contents
     lchdf = h5py.File(args["lcdir"], 'r')
     dfhalo = pd.DataFrame(
-            {'HF_ID' : lchdf['Halo_Rockstar_ID'].value,
-             'ID' : lchdf['Halo_ID'].value,
+            {'HF_ID' : lchdf['HF_ID'].value,
+             'LC_ID' : lchdf['LC_ID'].value,
+             #'LC_ID' : lchdf['Halo_ID'].value,
              'Halo_z' : lchdf['Halo_z'].value,
              'snapnum' : lchdf['snapnum'].value,
              'Vrms' : lchdf['VelDisp'].value,
@@ -62,7 +62,12 @@ def create_density_maps():
              ('HaloPosBox', 'X') : lchdf['HaloPosBox'][:, 0],
              ('HaloPosBox', 'Y') : lchdf['HaloPosBox'][:, 1],
              ('HaloPosBox', 'Z') : lchdf['HaloPosBox'][:, 2]})
+    if len(dfhalo.index.values) > 1200:
+        dfhalo = dfhalo.sample(n=1200)
+    print('There are %d galaxies in this lightcone' % len(dfhalo.index.values))
     nhalo_per_snapshot = dfhalo.groupby('snapnum').count()['HF_ID']
+    print('devided over lightcone as:')
+    print(nhalo_per_snapshot)
     snapshots = dfhalo.groupby('snapnum').count().index.values
     dfhalo = dfhalo.sort_values(by=['snapnum'])
 
@@ -150,15 +155,15 @@ def create_density_maps():
                     hmax=smlpixel)
             sigmatotal = dm_sigma+gas_sigma+star_sigma+bh_sigma
 
-
             # Make sure that density-map if filled
+            extention = 0
             while 0.0 in sigmatotal:
-                smlpixel += 5
+                extention += 5
                 dm_sigma = dmaps.projected_density_pmesh_adaptive(
                         pos, DM['Mass'][indx],
                         dfhalosnap['fov_Mpc'].values[ll],  #[Mpc]
                         args["ncells"],
-                        hmax=smlpixel)
+                        hmax=smlpixel+extention)
                 sigmatotal = dm_sigma+gas_sigma+star_sigma+bh_sigma
             #print(':: :: :: DM took %f seconds' % (time.time() - time_start))
             #tmap.plotting(sigmatotal, args["ncells"],
@@ -166,7 +171,7 @@ def create_density_maps():
 
             sigma_tot.append(sigmatotal)
             out_hfid.append(dfhalosnap['HF_ID'].values[ll])
-            out_lcid.append(dfhalosnap['ID'].values[ll])
+            out_lcid.append(dfhalosnap['LC_ID'].values[ll])
             out_fov.append(dfhalosnap['fov_Mpc'].values[ll])
             if args["walltime"] - (time_start - time.time())/(60*60) < 0.25:
                 fname = args["outbase"]+'DM_'+label+'_lc'+str(lclabel)+'.h5'

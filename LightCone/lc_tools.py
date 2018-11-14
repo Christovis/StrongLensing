@@ -1,10 +1,11 @@
 import os, sys
+import pandas as pd
 import numpy as np
 import CosmoDist as cd
 from astropy import units as u
-from astropy.cosmology import WMAP9
-import Ellipticity as Ell
-sys.path.insert(0, '..')
+from astropy.cosmology import LambdaCDM
+#import Ellipticity as Ell
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import readsubf
 import readsnap
 import read_hdf5
@@ -63,85 +64,64 @@ class Lightcone():
                         'velmax_b' : s.cat['SubhaloVmax'][indx],
                         'veldisp_b' : s.cat['SubhaloVelDisp'][indx],
                         'rvmax_b' : s.cat['SubhaloVmaxRad'][indx],
-                        'rhalfmass_b' : s.cat['SubhaloHalfmassRad'][indx]}
+                        'rhalfmass_b' : s.cat['SubhaloHalfmassRadType'][indx]}
             self.prop = prop_box
         elif halo_finder == 'Rockstar':
             hf_dir = hfdir + 'halos_%d.dat' % snapnum
-            data = open(hf_dir, 'r')
-            data = data.readlines()
-            subID = []
-            subpos = []
-            subvel = []
-            subMvir = []
-            subM200b = []
-            subvmax = []
-            subvrms = []
-            subRvir = []
-            subrs = []
-            subrvmax = []
-            sub_pa = []
-            sub_e = []
-            for k in range(len(data))[16:]:
-                if LengthUnit == 'kpc':
-                    pos = [float(coord)*1e-3 for coord in data[k].split()[9:12]]
-                else:
-                    pos = [float(coord) for coord in data[k].split()[9:12]]
-                vel = [float(coord) for coord in data[k].split()[12:15]]
-                av = [float(major_ax) for major_ax in data[k].split()[30:33]]
-                #bv = [float(major_ax) for major_ax in data[k].split()[32:35]]
-                #cv = [float(major_ax) for major_ax in data[k].split()[35:38]]
-                if np.count_nonzero(av) != 0:
-                    subID.append(float(data[k].split()[0]))
-                    subMvir.append(float(data[k].split()[2]))
-                    subvmax.append(float(data[k].split()[3]))
-                    subvrms.append(float(data[k].split()[4]))
-                    subRvir.append(float(data[k].split()[5]))
-                    subrs.append(float(data[k].split()[6]))
-                    subrvmax.append(float(data[k].split()[7]))
-                    subpos.append(pos)
-                    subvel.append(vel)
-                    subM200b.append(float(data[k].split()[21]))
-                    sub_s = float(data[k].split()[29])
-                    sub_e.append(1. - sub_s)
-                    PA = Ell.position_angle(av)
-                    sub_pa.append(PA)
-            subID = np.array(subID)
-            subpos = np.array(subpos)  # Comoving Distance
-            subvel = np.array(subvel)
-            subMvir = np.asarray(subMvir)
-            subM200b = np.asarray(subM200b)
-            subvmax = np.asarray(subvmax)
-            subvrms = np.asarray(subvrms)
-            subRvir = np.asarray(subRvir)
-            subrs = np.asarray(subrs)
-            subrvmax = np.asarray(subrvmax)
-            sub_e = np.asarray(sub_e)
-            sub_pa = np.asarray(sub_pa)
-            #boxlength = np.max(subpos[:, 0]) - np.min(subpos[:, 0])
-            sub_id = self.subhalo_selection(subpos, subMvir, subvrms, sub_e,
-                                            sub_pa)
-            print('----------> Halos Masses', np.min(subvrms), np.max(subvrms))
+            data = pd.read_csv(hf_dir, sep='\s+', skiprows=np.arange(1, 16))
+            if LengthUnit == 'kpc':
+                pos = pd.concat([data['X']*1e-3, data['Y']*1e-3, data['Z']*1e-3], axis=1)
+            else:
+                pos = pd.concat([data['X'], data['Y'], data['Z']], axis=1)
+            vel = pd.concat([data['VX'], data['VY'], data['VZ']], axis=1)
+            sub_id = self.subhalo_selection(pos, data['Mvir'], data['Vrms'], 0, 0)
             prop_box = {'snapnum' : snapnum*np.ones(len(sub_id[0])),
-                        'ID' : subID[sub_id][0],
-                        'pos' : subpos[sub_id, :][0],
-                        'pos_b' : subpos[sub_id, :][0],
-                        'vel_b' : subvel[sub_id, :][0],
-                        'Mvir_b' : subMvir[sub_id][0],
-                        'M200b_b' : subM200b[sub_id][0],
-                        'velmax_b' : subvmax[sub_id][0],
-                        'veldisp_b' : subvrms[sub_id][0],
-                        'rvir_b' : subRvir[sub_id][0],
-                        'rs_b' : subrs[sub_id][0],
-                        'rvmax_b' : subrvmax[sub_id][0],
-                        'ellipse_b' : sub_e[sub_id][0],
-                        'pa_b' : sub_pa[sub_id][0]}
+                        'ID' : data['#ID'].values[sub_id][0],
+                        'pos' : pos.values[sub_id][0],
+                        'pos_b' : pos.values[sub_id][0],
+                        'vel_b' : vel.values[sub_id][0],
+                        'Mvir_b' : data['Mvir'].values[sub_id][0],
+                        'M200b_b' : data['M200b'].values[sub_id][0],
+                        'velmax_b' : data['Vmax'].values[sub_id][0],
+                        'veldisp_b' : data['Vrms'].values[sub_id][0],
+                        'rvir_b' : data['Rvir'].values[sub_id][0],
+                        'rs_b' : data['Rs'].values[sub_id][0],
+                        'rvmax_b' : data['Rvmax'].values[sub_id][0],
+                        'Halfmass_Radius' : data['Halfmass_Radius'].values[sub_id][0]}
             self.prop= prop_box
         elif halo_finder == 'AHF':
             pass
+            
+        
+    def update_box(self, hfdir, snap_dir, snapnum, halo_finder, LengthUnit):
+        hf_dir = hfdir + 'halos_%d.dat' % snapnum
+        data = pd.read_csv(hf_dir, sep='\s+', skiprows=np.arange(1, 16))
+        if LengthUnit == 'kpc':
+            pos = pd.concat([data['X']*1e-3, data['Y']*1e-3, data['Z']*1e-3], axis=1)
+        else:
+            pos = pd.concat([data['X'], data['Y'], data['Z']], axis=1)
+        vel = pd.concat([data['VX'], data['VY'], data['VZ']], axis=1)
+        sub_id = self.subhalo_selection(pos, data['Mvir'], data['Vrms'], 0, 0)
+        prop_box = {'snapnum' : snapnum*np.ones(len(sub_id[0])),
+                    'ID' : data['#ID'].values[sub_id][0],
+                    'pos' : pos.values[sub_id][0],
+                    'pos_b' : pos.values[sub_id][0],
+                    'vel_b' : vel.values[sub_id][0],
+                    'Mvir_b' : data['Mvir'].values[sub_id][0],
+                    'M200b_b' : data['M200b'].values[sub_id][0],
+                    'velmax_b' : data['Vmax'].values[sub_id][0],
+                    'veldisp_b' : data['Vrms'].values[sub_id][0],
+                    'rvir_b' : data['Rvir'].values[sub_id][0],
+                    'rs_b' : data['Rs'].values[sub_id][0],
+                    'rvmax_b' : data['Rvmax'].values[sub_id][0],
+                    'Halfmass_Radius' : data['Halfmass_Radius'].values[sub_id][0]}
+        self.prop= prop_box
+
+
 
     def subhalo_selection(self, pos, mass, veldisp, ellipse, pa):
         # Define subhalo selection
-        sub_id1 = np.where(mass > 10**11)  # defined with Baojiu & Christian
+        sub_id1 = np.where(mass > 10**7)  # defined with Baojiu & Christian
         #sub_id2 = np.where(veldisp >= 160)  # arXiv:1507.07937
         #sub_id = set(sub_id1[0]) & set(sub_id2[0])
         #sub_id = np.array(list(sub_id))
@@ -206,9 +186,7 @@ class Lightcone():
                       'veldisp_lc' : box['veldisp_b'][indx],
                       'rvir_lc' : box['rvir_b'][indx],
                       'rs_lc' : box['rs_b'][indx],
-                      'rvmax_lc' : box['rvmax_b'][indx],
-                      'ellipse_lc' : box['ellipse_b'][indx],
-                      'pa_lc' : box['pa_b'][indx]}
+                      'rvmax_lc' : box['rvmax_b'][indx]}
             else:
                 lc['snapnum_box'] = np.concatenate((lc['snapnum_box'],
                                             box['snapnum'][indx]),
@@ -246,12 +224,6 @@ class Lightcone():
                 lc['rvmax_lc'] = np.concatenate((lc['rvmax_lc'],
                                             box['rvmax_b'][indx]),
                                             axis=0)
-                lc['ellipse_lc'] = np.concatenate((lc['ellipse_lc'],
-                                            box['ellipse_b'][indx]),
-                                            axis=0)
-                lc['pa_lc'] = np.concatenate((lc['pa_lc'],
-                                                box['pa_b'][indx]),
-                                                axis=0)
                 #del subprop['snapnum'], ['ID']
                 #del subprop['pos'], subprop['pos_b'], subprop['Mvir_b'],
                 #del subprop['M200b_b']
@@ -285,9 +257,7 @@ class Lightcone():
                       'veldisp_b' : box.prop['veldisp_b'][sub_id],
                       'rvir_b' : box.prop['rvir_b'][sub_id],
                       'rs_b' : box.prop['rs_b'][sub_id],
-                      'rvmax_b' : box.prop['rvmax_b'][sub_id],
-                      'ellipse_b' : box.prop['ellipse_b'][sub_id],
-                      'pa_b' : box.prop['pa_b'][sub_id]}
+                      'rvmax_b' : box.prop['rvmax_b'][sub_id]}
         return boxpart
 
 

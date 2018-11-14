@@ -51,11 +51,10 @@ def lensing_signal():
     args["lcdir"]        = sys.argv[3]
     args["outbase"]      = sys.argv[4]
     args["ncells"]      = int(sys.argv[5])
-    
-    #args["simdir"]       = '/cosma6/data/dp004/dc-arno1/SZ_project/full_physics/L62_N512_GR_kpc/'
-    #args["dmdir"]        = '/cosma5/data/dp004/dc-beck3/StrongLensing/DensityMap/full_physics/L62_N512_GR_kpc/Lightcone/'
-    #args["lcdir"]        = '/cosma5/data/dp004/dc-beck3/StrongLensing/LightCone/full_physics/Rockstar/LC_SN_L62_N512_GR_kpc'
-    #args["outbase"]      = '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/full_physics/Rockstar/L62_N512_GR_kpc/Lightcone/'
+    #args["simdir"]       = '/cosma6/data/dp004/dc-arno1/SZ_project/full_physics/L62_N512_F5_kpc/'
+    #args["dmdir"]        = '/cosma5/data/dp004/dc-beck3/StrongLensing/DensityMap/full_physics/L62_N512_F5_kpc/Lightcone/'
+    #args["lcdir"]        = '/cosma5/data/dp004/dc-beck3/StrongLensing/LightCone/full_physics/Rockstar/LC_SN_L62_N512_F5_kpc'
+    #args["outbase"]      = '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/full_physics/Rockstar/L62_N512_F5_kpc/Lightcone/'
     #args["ncells"]      = 512
     
     # Names of all available Density maps
@@ -82,9 +81,10 @@ def lensing_signal():
 
         # Load Lightcones
         lcf = h5py.File(lcfile[ff], 'r')
-        lcdf = pd.DataFrame({'HF_ID' : lcf['Halo_Rockstar_ID'].value,
-                             'LC_ID' : lcf['Halo_ID'].value,
+        lcdf = pd.DataFrame({'HF_ID' : lcf['HF_ID'].value,
+                             'LC_ID' : lcf['LC_ID'].value,
                              'zl' : lcf['Halo_z'].value,
+                             'vrms' : lcf['VelDisp'].value,
                              'snapnum' : lcf['snapnum'].value,
                              'fov_Mpc' : lcf['FOV'][:][1]})
         lcdf = lcdf.set_index('LC_ID')
@@ -92,6 +92,8 @@ def lensing_signal():
                  'zs' : lcf['Src_z'].value,
                  'SrcPosSky' : lcf['SrcPosSky'].value,
                  'SrcAbsMag' : lcf['SrcAbsMag'].value}
+
+        print('The minimum Vrms is %f' % (np.min(lcdf['vrms'].values)))
 
         dmdf = dmdf.sort_values(by=['LC_ID'])
         lcdf = lcdf.sort_values(by=['LC_ID'])
@@ -110,6 +112,7 @@ def lensing_signal():
         print('There are %d lenses in file' % (len(lcdf.index.values)))
         for ll in range(len(lcdf.index.values)):
             lens = lcdf.iloc[ll]
+            #print('working on lens %d' % lens['HF_ID'])
             # convert. box size and pixels size from ang. diam. dist. to arcsec
             FOV_arc = (lens['fov_Mpc']/cf.Da(lens['zl'], cosmo)*u.rad).to_value('arcsec')
             dsx_arc = FOV_arc/args["ncells"]  #[arcsec] pixel size
@@ -120,41 +123,41 @@ def lensing_signal():
             zs, Src_ID, SrcPosSky = lt.source_selection(
                     srcdf['Src_ID'], srcdf['zs'], srcdf['SrcPosSky'],
                     lcdf.index.values[ll])
-                
+            
             # Run through sources
             check_for_sources = 0
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
             for ss in range(len(Src_ID)):
                 # Calculate critical surface density
                 sigma_cr = lt.sigma_crit(lens['zl'],
                                          zs[ss],
                                          cosmo).to_value('Msun Mpc-2')
 
+                # convert source position from Mpc to arcsec
+                beta = lt.mpc2arc(SrcPosSky[ss])
+                beta = [bb*1e-3 for bb in beta]
+
                 # Calculate convergence map
                 kappa = lens['density_map']/sigma_cr
-                fig = plt.figure()
-                ax = fig.add_subplot(111)
+                #fig = plt.figure()
+                #ax = fig.add_subplot(111)
                 
                 # Calculate Deflection Maps
-                alpha1, alpha2, mu_map, phi, detA, lambda_t = lt.cal_lensing_signals(kappa,
-                                                                                     FOV_arc,
-                                                                                     args["ncells"]) 
-                # Calculate Einstein Radii
-                Ncrit, curve_crit, curve_crit_tan, Rein = lt.einstein_radii(lp1, lp2,
-                                                                            detA,
-                                                                            lambda_t,
-                                                                            lens['zl'],
-                                                                            cosmo,
-                                                                            ax, 'med')
-                if Rein == 0. or math.isnan(Rein):
-                    print('!!! Rein is 0. or NaN')
-                    continue
+                alpha1, alpha2, mu_map, phi, detA, lambda_t = lt.cal_lensing_signals(
+                        kappa, FOV_arc, args["ncells"]) 
+                # Calculate Einstein Radii in [arcsec]
+                Ncrit, curve_crit, curve_crit_tan, Rein = lt.einstein_radii(
+                        lp1, lp2, detA, lambda_t, lens['zl'], cosmo, ax, 'med')
+                #if Rein == 0. or math.isnan(Rein):
+                #    print('!!! Rein is 0. or NaN')
+                #    continue
                 # Calculate Time-Delay and Magnification
-                snia_pos = SrcPosSky[ss]
-                n_imgs, delta_t, mu, theta, beta = lt.timedelay_magnification(
+                n_imgs, delta_t, mu, theta  = lt.timedelay_magnification(
                         mu_map, phi, dsx_arc, args["ncells"],
-                        lp1, lp2, alpha1, alpha2, snia_pos,
+                        lp1, lp2, alpha1, alpha2, beta,
                         zs[ss], lens['zl'], cosmo)
-                if n_imgs >= 1:                
+                if n_imgs > 1:
                     # Tree Branch 2
                     s_srcID.append(Src_ID[ss])
                     s_zs.append(zs[ss])
@@ -168,7 +171,7 @@ def lensing_signal():
                     s_deltat.append(delta_t)
                     s_mu.append(mu)
                     check_for_sources = 1
-                    print(' -> %d multiple lensed images' % (n_imgs))
+                    #print(' -> %d multiple lensed images' % (n_imgs))
             if check_for_sources == 1:
                 # Tree Branch 1
                 l_HFID.append(int(lens['HF_ID']))
@@ -210,7 +213,7 @@ def lensing_signal():
     #    tree['Sources']['mu'][imgs] = l_mu[imgs]
 
     # Tree Branches of Node 1 : Lenses
-    tree['Halo_ID'] = l_haloID
+    tree['LC_ID'] = l_haloID
     tree['HF_ID'] = l_HFID
     tree['snapnum'] = l_snapnum
     tree['zl'] = l_zl
@@ -237,5 +240,10 @@ def lensing_signal():
     plt.close(fig)
 
 
+#args["simdir"]       = '/cosma6/data/dp004/dc-arno1/SZ_project/full_physics/L62_N512_GR_kpc/'
+#args["dmdir"]        = '/cosma5/data/dp004/dc-beck3/StrongLensing/DensityMap/full_physics/L62_N512_GR_kpc/Lightcone/'
+#args["lcdir"]        = '/cosma5/data/dp004/dc-beck3/StrongLensing/LightCone/full_physics/Rockstar/LC_SN_L62_N512_GR_kpc'
+#args["outbase"]      = '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/full_physics/Rockstar/L62_N512_GR_kpc/Lightcone/'
+#args["ncells"]      = 512
 if __name__ == '__main__':
     lensing_signal()

@@ -16,7 +16,9 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import read_hdf5
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/lib/')
 import cfuncs as cf
+import lenstools as lt
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, append=1)
 os.system("taskset -p 0xff %d" % os.getpid())
@@ -155,9 +157,9 @@ def plant_Tree():
 
 
 def lenslistinit():
-    global l_HFID, l_deltat, l_mu, l_srctheta, l_srcbeta, l_tancritcurves, l_einsteinradius
-    l_HFID=[]; l_deltat=[]; l_mu=[]; l_srctheta=[]; l_srcbeta=[]; l_tancritcurves=[]; l_einsteinradius=[]
-    return l_HFID, l_deltat, l_mu, l_srctheta, l_srcbeta,l_tancritcurves, l_einsteinradius
+    global l_HFID, l_fov, l_deltat, l_mu, l_srctheta, l_srcbeta, l_tancritcurves, l_einsteinradius
+    l_HFID=[]; l_fov=[]; l_deltat=[]; l_mu=[]; l_srctheta=[]; l_srcbeta=[]; l_tancritcurves=[]; l_einsteinradius=[]
+    return l_HFID, l_fov, l_deltat, l_mu, l_srctheta, l_srcbeta,l_tancritcurves, l_einsteinradius
 
 
 def srclistinit():
@@ -172,17 +174,18 @@ def lensing_signal():
     args["snapnum"]      = int(sys.argv[1])
     args["simdir"]       = sys.argv[2]
     args["dmdir"]        = sys.argv[3]
-    args["outbase"]      = sys.argv[4]
+    args["ncells"]        = int(sys.argv[4])
+    args["outbase"]      = sys.argv[5]
     
     # Organize devision of Sub-&Halos over Processes on Proc. 0
     s = read_hdf5.snapshot(args["snapnum"], args["simdir"])
     fname = glob.glob(args["dmdir"]+'*.h5')
     ffname = []
     for ff in range(len(fname)):
-        if (os.path.getsize(fname[ff])/(1024*1024.0)) < 1:
-            fname[ff] = 0
-        else:
-            ffname.append(fname[ff])
+        #if (os.path.getsize(fname[ff])/(1024*1024.0)) < 1:
+        #    fname[ff] = 0
+        #else:
+        ffname.append(fname[ff])
     ffname = np.asarray(ffname)
 
     # Cosmological Parameters
@@ -194,7 +197,7 @@ def lensing_signal():
    
     # Calculate critical surface density
     zl = redshift
-    zs = 1.5
+    zs = 0.409
     sigma_cr = sigma_crit(zl, zs, cosmo).to_value('Msun Mpc-2')
     
     lenslistinit(); srclistinit()
@@ -205,41 +208,38 @@ def lensing_signal():
         dmf = h5py.File(ffname[ff], 'r')
     
         # Run through lenses
-        for ll in range(len(dmf['subhalo_id']))[:]:
+        for ll in range(len(dmf['HFID']))[:]:
             print('Works on lens %d with ID %d' % \
-                    (ll, dmf['subhalo_id'][ll]))
+                    (ll, dmf['HFID'][ll]))
             # convert. box size and pixels size from ang. diam. dist. to arcsec
-            FOV_arc = (dmf['fov_width'][ll]/cf.Da(zl, cosmo)*u.rad).to_value('arcsec')
+            FOV_arc = (dmf['FOV'][ll]/cf.Da(zl, cosmo)*u.rad).to_value('arcsec')
             dsx_arc = FOV_arc/args["ncells"]  #[arcsec] pixel size
             # initialize the coordinates of grids (light rays on lens plan)
             lpv = np.linspace(-(FOV_arc-dsx_arc)/2, (FOV_arc-dsx_arc)/2, args["ncells"])
             lp1, lp2 = np.meshgrid(lpv, lpv)  #[arcsec]
 
             # Calculate convergence map
-            kappa = dmf['density_map'][ll]/sigma_cr
+            kappa = dmf['DMAP'][ll]/sigma_cr
             fig = plt.figure()
             ax = fig.add_subplot(111)
             
             # Calculate Deflection Maps
-            alpha1, alpha2, mu_map, phi, detA, lambda_t = cal_lensing_signals(kappa,
-                                                                              FOV_arc,
-                                                                              args["ncells"]) 
+            alpha1, alpha2, mu_map, phi, detA, lambda_t = lt.cal_lensing_signals(
+                    kappa, FOV_arc, args["ncells"]) 
             # Calculate Einstein Radii
-            Ncrit, curve_crit, curve_crit_tan, Rein = einstein_radii(lp1, lp2,
-                                                                     detA,
-                                                                     lambda_t,
-                                                                     zl, cosmo,
-                                                                     ax, 'med', ll)
+            Ncrit, curve_crit, curve_crit_tan, Rein = lt.einstein_radii(
+                    lp1, lp2, detA, lambda_t, zl, cosmo, ax, 'med')
             # Calculate Time-Delay and Magnification
-            snia_pos = np.array([0, 0, 0])
-            n_imgs, delta_t, mu, theta, beta = timedelay_magnification(
+            beta = np.array([0., 0., 0.])
+            n_imgs, delta_t, mu, theta = lt.timedelay_magnification(
                     mu_map, phi, dsx_arc, args["ncells"],
-                    lp1, lp2, alpha1, alpha2, snia_pos, zs, zl, cosmo)
+                    lp1, lp2, alpha1, alpha2, beta, zs, zl, cosmo)
             if n_imgs > 1:
                 #TODO: does n_imgs include the original
                 print(' -> %d multiple lensed images' % (n_imgs))
                 # Tree Branch 1
-                l_HFID.append(int(dmf['subhalo_id'][ll]))
+                l_HFID.append(int(dmf['HFID'][ll]))
+                l_fov.append(FOV_arc)
                 # Tree Branch 2
                 l_srcbeta.append(beta)
                 l_tancritcurves.append(curve_crit_tan)
@@ -257,6 +257,7 @@ def lensing_signal():
     tree['snapnum'] = args["snapnum"]
     tree['zl'] = redshift
     tree['zs'] = zs
+    tree['FOV'] = l_fov  #[arcsec] for glafic
     # Tree Branches of Node 1 : Sources
     tree['Sources']['beta'] = l_srcbeta
     tree['Sources']['TCC'] = l_tancritcurves
@@ -268,7 +269,7 @@ def lensing_signal():
         tree['Sources']['mu'][imgs] = l_mu[imgs]
     label = args["simdir"].split('/')[-2].split('_')[2]
     zllabel = str(redshift).replace('.', '')[:3].zfill(3)
-    zslabel = '{:<03d}'.format(int(str(1.5).replace('.', '')))
+    zslabel = '{:<03d}'.format(int(str(zs).replace('.', '')))
     filename = args["outbase"]+'LM_%s_zl%szs%s.pickle' % (label, zllabel, zslabel)
     filed = open(filename, 'wb')
     pickle.dump(tree, filed)

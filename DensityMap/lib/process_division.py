@@ -155,17 +155,18 @@ def scatter_subhalos(SH, split_size_1d,
     sh_x_local = np.zeros((int(split_size_1d[comrank])))
     sh_y_local = np.zeros((int(split_size_1d[comrank])))
     sh_z_local = np.zeros((int(split_size_1d[comrank])))
+    split_disp_1d = SH['split_disp_1d']
 
     # Scatter
     comm.Scatterv([SH['ID'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
                   sh_id_local, root=root_proc)
-    comm.Scatterv([SH['Vrms'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
+    comm.Scatterv([SH['Vrms'], split_size_1d, split_disp_1d, MPI.DOUBLE],
                   sh_vrms_local, root=root_proc)
-    comm.Scatterv([SH['X'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
+    comm.Scatterv([SH['X'], split_size_1d, split_disp_1d, MPI.DOUBLE],
                   sh_x_local,root=root_proc)
-    comm.Scatterv([SH['Y'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
+    comm.Scatterv([SH['Y'], split_size_1d, split_disp_1d, MPI.DOUBLE],
                   sh_y_local,root=root_proc)
-    comm.Scatterv([SH['Z'], SH['split_size_1d'], SH['split_disp_1d'], MPI.DOUBLE],
+    comm.Scatterv([SH['Z'], split_size_1d, split_disp_1d, MPI.DOUBLE],
                   sh_z_local,root=root_proc)
     
     # Collect

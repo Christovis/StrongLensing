@@ -2,7 +2,7 @@ import numpy as np
 import random as rnd
 
 # Fixing random state for reproducibility
-rnd.seed(10)
+rnd.seed(2944)  #1872, 2944, 5912, 7638
 
 def translation_s(position, boxlength):
     """
@@ -30,7 +30,22 @@ def translation_s(position, boxlength):
     return position
 
 
-def rotation_s(position):
+def inversion_s(position, boxlength):
+    """
+    Translational randomization
+    Input:
+    Output:
+    """
+    #print('box range1', np.min(position[:, 2]), np.max(position[:, 2]))
+    if rnd.random() > 0.5:
+        position[:, 1] *= -1
+    if rnd.random() > 0.5:
+        position[:, 2] *= -1
+    #print('box range2', np.min(position[:, 2]), np.max(position[:, 2]))
+    return position
+
+
+def rotation_s(position, boxlength, cosmo_dist):
     """
     Rotational randomization.
     
@@ -39,31 +54,35 @@ def rotation_s(position):
     Output:
     """
     # centre on zero
-    centre = [np.mean(position[:, 0]),
-              np.mean(position[:, 1]),
-              np.mean(position[:, 2])]
-    position[:, 0] -= centre[0]
-    position[:, 1] -= centre[1]
-    position[:, 2] -= centre[2]
-    # only 4 angles due to performance
-    phi = rnd.choice([0, np.pi/2, np.pi, 3*np.pi/2])
-    psi = rnd.choice([0, np.pi/2, np.pi, 3*np.pi/2])
-    tau = rnd.choice([0, np.pi/2, np.pi, 3*np.pi/2])
-    rot_matrix = np.array([
-        [np.cos(tau)*np.cos(phi),
-         -np.cos(psi)*np.sin(phi)+np.sin(psi)*np.sin(tau)*np.cos(phi),
-         np.sin(psi)*np.sin(phi)+np.cos(psi)*np.sin(tau)*np.cos(phi)],
-        [np.cos(tau)*np.sin(phi),
-         np.cos(psi)*np.cos(phi)+np.sin(psi)*np.sin(tau)*np.sin(phi),
-         -np.sin(psi)*np.cos(phi)+np.cos(psi)*np.sin(tau)*np.sin(phi)],
-        [-np.sin(tau),
-         np.sin(psi)*np.cos(tau),
-         np.cos(psi)*np.cos(tau)]])
-    position = np.dot(rot_matrix, position.T).T
-    # centre on original position
+    centre = [boxlength/2-cosmo_dist, boxlength/2, boxlength/2]
     position[:, 0] += centre[0]
     position[:, 1] += centre[1]
     position[:, 2] += centre[2]
+    tracking = np.array([0, 1, 2])  # to follow original axes
+    if rnd.random() > 0.5:
+        # change x & y axes = rotate around z
+        x_indx = np.where(tracking == 0)[0]
+        y_indx = np.where(tracking == 1)[0]
+        position[:, [x_indx, y_indx]] = position[:, [y_indx, x_indx]]
+        tracking[x_indx] = 1
+        tracking[y_indx] = 0
+    if rnd.random() > 0.5:
+        # change x & z axes = rotate around y
+        x_indx = np.where(tracking == 0)[0]
+        z_indx = np.where(tracking == 2)[0]
+        position[:, [x_indx, z_indx]] = position[:, [z_indx, x_indx]]
+        tracking[x_indx] = 2
+        tracking[z_indx] = 0
+    if rnd.random() > 0.5:
+        # change y & z axes = rotate around x
+        y_indx = np.where(tracking == 1)[0]
+        z_indx = np.where(tracking == 2)[0]
+        position[:, [y_indx, z_indx]] = position[:, [z_indx, y_indx]]
+        tracking[y_indx] = 2
+        tracking[z_indx] = 1
+    position[:, 0] -= centre[0]
+    position[:, 1] -= centre[1]
+    position[:, 2] -= centre[2]
     return position
 
 #if __name__ == "__main__":

@@ -10,7 +10,7 @@ import h5py
 import CosmoDist as cd
 from lc_tools import Lightcone as LC
 import lc_randomize as LCR
-sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/')  # parent directory
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')  # parent directory
 import readsnap
 import readsubf
 import readlensing as rf
@@ -54,7 +54,7 @@ logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
 
 ################################################################################
 # Load Simulation Specifications
-LCSettings = '/cosma5/data/dp004/dc-beck3/shell_script/LCSettings.txt'
+LCSettings = '/cosma5/data/dp004/dc-beck3/StrongLensing/shell_script/LCSettings.txt'
 sim_dir, sim_phy, sim_name, sim_col, hf_dir, hf_name, lc_dir, dd, HQ_dir = rf.Simulation_Specs(LCSettings)
 #hf_name = 'Rockstar'
 #hf_name = 'Subfind'
@@ -103,7 +103,7 @@ for sim in range(len(sim_dir)):
     reddistfunc = interp1d(CoDi, z_lcone, kind='cubic')
     CoDi = CoDi[1:]
     # Load Subhalo properties for z=0
-    snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
+    #snapfile = sim_dir[sim]+'snapdir_%03d/snap_%03d'
     box = LC(hf_dir[sim], snapfile, snap_tot_num, hf_name, LengthUnit)
     boxlength = 62  #[Mpc] box.boxlength(box.prop['pos_b'])
     # Define Observer Position
@@ -123,12 +123,13 @@ for sim in range(len(sim_dir)):
         limit = 0
         while limit == 0:
             if CoDi[i] > np.max(box.prop['pos_b'][:, 0]):
-                #print(' Add new box')
                 translation_z += boxlength
                 box.prop['pos_b'][:, 0] += boxlength
                 # Add randomness
+                box.prop['pos_b'] = LCR.inversion_s(box.prop['pos_b'], boxlength)
                 box.prop['pos_b'] = LCR.translation_s(box.prop['pos_b'], boxlength)
-                box.prop['pos_b'] = LCR.rotation_s(box.prop['pos_b'])
+                box.prop['pos_b'] = LCR.rotation_s(box.prop['pos_b'],
+                                                   boxlength, translation_z)
             boxmaxdist = np.max(box.prop['pos_b'][:, 0])
             if CoDi[i] >= boxmaxdist:  #---------------------------------------
                 # New box does not reach end of z-range')
@@ -138,24 +139,9 @@ for sim in range(len(sim_dir)):
                 else:
                     lc = box.fill_lightcone(lc, box.prop, alpha, hf_name)
             elif CoDi[i] == CoDi[-1]:  #---------------------------------------
-                #print('# End of Light Cone')
                 sub_id = box.find_sub_in_CoDi(box.prop['pos_b'], 0, CoDi[i], 0)
                 if len(sub_id[0]) != 0:
                     box_end = box.box_division(box, sub_id, hf_name)
-                    #box_end = {'snapnum' :box.prop['snapnum'][sub_id],
-                    #           'ID' : box.prop['ID'][sub_id],
-                    #           'pos' : box.prop['pos'][sub_id],
-                    #           'pos_b' : box.prop['pos_b'][sub_id],
-                    #           'vel_b' : box.prop['vel_b'][sub_id],
-                    #           'Mvir_b' : box.prop['Mvir_b'][sub_id],
-                    #           'M200b_b' : box.prop['M200b_b'][sub_id],
-                    #           'velmax_b' : box.prop['velmax_b'][sub_id],
-                    #           'veldisp_b' : box.prop['veldisp_b'][sub_id],
-                    #           'rvir_b' : box.prop['rvir_b'][sub_id],
-                    #           'rs_b' : box.prop['rs_b'][sub_id],
-                    #           'rvmax_b' : box.prop['rvmax_b'][sub_id],
-                    #           'ellipse_b' : box.prop['ellipse_b'][sub_id],
-                    #           'pa_b' : box.prop['pa_b'][sub_id]}
                 if lc == None:
                     # if lightcone is empty
                     lc = box.fill_lightcone(lc, box_end, alpha, hf_name)
@@ -164,34 +150,21 @@ for sim in range(len(sim_dir)):
                 limit = 1  # End of Light Cone
             else:  #-----------------------------------------------------------
                 if boxmark == boxmaxdist:
-                    #print('# SimBox extends over more than 2 redshifts')
                     # Next redshift
-                    prop_box, boxlength = prop.update_box(hf_dir[sim], snapfile,
-                                                                snapshot-i, header,
-                                                                hf_name, LengthUnit)
+                    box = LC(hf_dir[sim], snapfile, snapshot-i,
+                             hf_name, LengthUnit)
                     # Add randomness
-                    #box.prop['pos_b'] = LCR.translation_s(box.prop['pos_b'], boxlength)
-                    #prop_box['pos_b'] = LCR.rotation_s(prop_box['pos_b'])
-                    prop_box['pos_b'] = prop.position_box(prop_box['pos_b'],
-                                                          boxlength,
-                                                          translation_z, 0)
+                    box.position_box_init(translation_z)
+                    box.prop['pos_b'] = LCR.inversion_s(box.prop['pos_b'], boxlength)
+                    box.prop['pos_b'] = LCR.translation_s(box.prop['pos_b'], boxlength)
+                    box.prop['pos_b'] = LCR.rotation_s(box.prop['pos_b'],
+                                                       boxlength, translation_z)
+                    print('box pos y',
+                            np.min(box.prop['pos_b'][:, 1]),
+                            np.max(box.prop['pos_b'][:, 1]))
                     sub_id = box.find_sub_in_CoDi(box.prop['pos_b'], 0, CoDi[i], 0)
                     if len(sub_id[0]) != 0:
                         box_z3 = box.box_division(box, sub_id, hf_name)
-                        #box_z3 = {'snapnum' : box.prop['snapnum'][sub_id],
-                        #          'ID' : box.prop['ID'][sub_id],
-                        #          'pos' : box.prop['pos'][sub_id],
-                        #          'pos_b' : box.prop['pos_b'][sub_id],
-                        #          'vel_b' : box.prop['vel_b'][sub_id],
-                        #          'Mvir_b' : box.prop['Mvir_b'][sub_id],
-                        #          'M200b_b' : box.prop['M200b_b'][sub_id],
-                        #          'velmax_b' : box.prop['velmax_b'][sub_id],
-                        #          'veldisp_b' : box.prop['veldisp_b'][sub_id],
-                        #          'rvir_b' : box.prop['rvir_b'][sub_id],
-                        #          'rs_b' : box.prop['rs_b'][sub_id],
-                        #          'rvmax_b' : box.prop['rvmax_b'][sub_id],
-                        #          'ellipse_b' : box.prop['ellipse_b'][sub_id],
-                        #          'pa_b' : box.prop['pa_b'][sub_id]}
                         if lc == None:
                             # if lightcone is empty
                             lc = box.fill_lightcone(lc, box.prop, alpha, hf_name)
@@ -203,20 +176,6 @@ for sim in range(len(sim_dir)):
                     sub_id = box.find_sub_in_CoDi(box.prop['pos_b'], 0, CoDi[i], 0)
                     if len(sub_id[0]) != 0:
                         box_z1 = box.box_division(box, sub_id, hf_name)
-                        #box_z1 = {'snapnum' : box.prop['snapnum'][sub_id],
-                        #          'ID' : box.prop['ID'][sub_id],
-                        #          'pos' : box.prop['pos'][sub_id],
-                        #          'pos_b' : box.prop['pos_b'][sub_id],
-                        #          'vel_b' : box.prop['vel_b'][sub_id],
-                        #          'Mvir_b' : box.prop['Mvir_b'][sub_id],
-                        #          'M200b_b' : box.prop['M200b_b'][sub_id],
-                        #          'velmax_b' : box.prop['velmax_b'][sub_id],
-                        #          'veldisp_b' : box.prop['veldisp_b'][sub_id],
-                        #          'rvir_b' : box.prop['rvir_b'][sub_id],
-                        #          'rs_b' : box.prop['rs_b'][sub_id],
-                        #          'rvmax_b' : box.prop['rvmax_b'][sub_id],
-                        #          'ellipse_b' : box.prop['ellipse_b'][sub_id],
-                        #          'pa_b' : box.prop['pa_b'][sub_id]}
                         if lc == None:
                             # if lightcone is empty
                             lc = box.fill_lightcone(lc, box_z1, alpha, hf_name)
@@ -234,20 +193,6 @@ for sim in range(len(sim_dir)):
                                                   CoDi[i+1], 0)
                     if len(sub_id[0]) != 0:
                         box_z2 = box.box_division(box, sub_id, hf_name)
-                        #box_z2 = {'snapnum' : box.prop['snapnum'][sub_id],
-                        #          'ID' : box.prop['ID'][sub_id],
-                        #          'pos' : box.prop['pos'][sub_id],
-                        #          'pos_b' : box.prop['pos_b'][sub_id],
-                        #          'vel_b' : box.prop['vel_b'][sub_id],
-                        #          'Mvir_b' : box.prop['Mvir_b'][sub_id],
-                        #          'M200b_b' : box.prop['M200b_b'][sub_id],
-                        #          'velmax_b' : box.prop['velmax_b'][sub_id],
-                        #          'veldisp_b' : box.prop['veldisp_b'][sub_id],
-                        #          'rvir_b' : box.prop['rvir_b'][sub_id],
-                        #          'rs_b' : box.prop['rs_b'][sub_id],
-                        #          'rvmax_b' : box.prop['rvmax_b'][sub_id],
-                        #          'ellipse_b' : box.prop['ellipse_b'][sub_id],
-                        #          'pa_b' : box.prop['pa_b'][sub_id]}
                         if lc == None:
                             # if lightcone is empty
                             lc = box.fill_lightcone(lc, box_z2, alpha, hf_name)
@@ -266,12 +211,12 @@ for sim in range(len(sim_dir)):
     #redshift_lc = [z_at_value(cosmo.comoving_distance, dist*u.Mpc, zmax=1) for dist in sub_dist]
     # Write data to h5 file which can be read by LightCone_read.py
     # to analyse and plot
-    outdir = '/cosma5/data/dp004/dc-beck3/LightCone/'
-    hf = h5py.File(outdir+sim_name[sim]+'.h5', 'w')
+    outdir = '/cosma5/data/dp004/dc-beck3/StrongLensing/LightCone/full_physics/Rockstar/'
+    hf = h5py.File(outdir+'LC_'+sim_name[sim]+'_2.h5', 'w')
     if hf_name == 'Subfind':
         hf.create_dataset('Halo_z', data=redshift_lc )
         hf.create_dataset('snapnum', data=lc['snapnum_box'])
-        hf.create_dataset('Halo_ID', data=lc['ID_box'])  # Rockstar ID
+        hf.create_dataset('HF_ID', data=lc['ID_box'])  # Halo Finder ID
         hf.create_dataset('HaloPosBox', data=lc['pos_box'])  #[Mpc]
         hf.create_dataset('HaloPosLC', data=lc['pos_lc'])  #[Mpc]
         hf.create_dataset('HaloVel', data=lc['vel_lc'])  #[Mpc]
@@ -281,7 +226,7 @@ for sim in range(len(sim_dir)):
         hf.create_dataset('Rvmax', data=lc['rvmax_lc'])  #[kpc]
         hf.create_dataset('Rhalfmass', data=lc['rhalfmass_lc'])  #[kpc]
     elif hf_name == 'Rockstar':
-        hf.create_dataset('Halo_ID', data=lc['ID_box'])  # Rockstar ID
+        hf.create_dataset('HF_ID', data=lc['ID_box'])  # Halo Finder ID
         hf.create_dataset('snapnum', data=lc['snapnum_box'])
         hf.create_dataset('Halo_z', data=redshift_lc )
         hf.create_dataset('Mvir', data=lc['Mvir_lc'])  #[Msun/h]
@@ -294,6 +239,4 @@ for sim in range(len(sim_dir)):
         hf.create_dataset('Rvir', data=lc['rvir_lc'])  #[kpc]
         hf.create_dataset('Rs', data=lc['rs_lc'])  #[kpc]
         hf.create_dataset('Rvmax', data=lc['rvmax_lc'])  #[kpc]
-        hf.create_dataset('ellipticity', data=lc['ellipse_lc'])
-        hf.create_dataset('position_angle', data=lc['pa_lc'])  #[]
     hf.close()

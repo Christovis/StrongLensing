@@ -7,14 +7,14 @@ import h5py
 from astropy import units as u
 from astropy import constants as const
 from astropy.cosmology import LambdaCDM
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingPostProc/lib/')
 import cfuncs as cf
-import LPP_funcs as lppf
+import lppfuncs as lppf
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import read_hdf5
 import readlensing as rf
 import readsnap
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/')
-#import lm_funcs_mp # Why do I need to load this???
 import LM_main
 from LM_main import plant_Tree # Why do I need to load this???
 

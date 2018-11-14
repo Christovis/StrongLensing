@@ -20,15 +20,17 @@ def select_particles(pos, _centre, _width, _regiontype='box'):
     pos = pos - _centre
     if _regiontype == 'box':
         indx = np.logical_and(np.abs(pos[:, 0]) < 0.5*_width,
-                               np.abs(pos[:, 1]) < 0.5*_width,
-                               np.abs(pos[:, 2]) < 0.5*_width)
+                              np.abs(pos[:, 1]) < 0.5*_width,
+                              np.abs(pos[:, 2]) < 0.5*_width)
         indx = np.where(indx)[0]
     elif _regiontype == 'sphere':
         _dist = np.sqrt(_pos[:, 0]**2 +
                         _pos[:, 1]**2 +
                         _pos[:, 2]**2)
         indx = np.where(_dist <= 0.5*_width)[0]
-    return pos[indx, :], indx
+    
+    pos = pos[indx, :] + np.ones(3)*0.5*_width
+    return pos, indx
 
 
 
@@ -129,11 +131,22 @@ def projected_density_pmesh(pos, mass, fov, ncells, window='tsc',
     return Sigma.value #, xs, ys
 
 
-def projected_density_pmesh_adaptive(pos, mass, fov, ncells, hmax=20,
+def projected_density_pmesh_adaptive(pos, mass, fov, ncells, hmax,
                                      window='tsc', projection_axis=0,
                                      smooth_fac=1.0, neighbour_no=32):
+    """
+    Input
+        pos : particle positions
+        mass : mass of particles
+        fov : edge-length of field-of-view
+        ncells : number of pixels on edge
+        hmax : max. smoothing length in nr. of pixels
+               (to reduce comp. cost if h is too large)
+        window : interpolation scheme (e.g. tsc, cic, ...)
+        neighbour_no : nearest neighbour search to find the
+                       smoothing length
+    """
     dx = float(fov)/ncells
-    pos += np.ones(3)*0.5*fov
     X = np.copy(pos)
     pm = mesh.ParticleMesh(Nmesh=[ncells,ncells], BoxSize=fov)
     # Find 'smoothing lengths'
@@ -142,19 +155,22 @@ def projected_density_pmesh_adaptive(pos, mass, fov, ncells, hmax=20,
         dist, ids = kdt.query(X, k=neighbour_no, return_distance=True)
         h = smooth_fac*np.max(dist,axis=1)/dx
     else:
-        h = np.ones(len(X))*hmax
-    h[h>hmax]=hmax
+        if hmax != 'inf':
+            h = np.ones(len(X))*hmax
+        else:
+            h = np.ones(len(X))*10
+    if hmax != 'inf':
+        h[h>hmax]=hmax
+    else:
+        hmax = ncells
+        h[h>hmax]=ncells
     h[h<1] = 1
 
     axes = [0,1,2]
     axes.remove(projection_axis)
     mass2D =  pm.paint(pos[:, axes],hsml=smooth_fac*h,mass=mass,resampler=window)
     Sigma = mass2D / (dx*dx)
-    #xedges = np.linspace(-0.5*fov, 0.5*fov, ncells+1)
-    #yedges = np.linspace(-0.5*fov, 0.5*fov, ncells+1)
-    #xs = 0.5*(xedges[1:]+xedges[:-1])
-    #ys = 0.5*(yedges[1:]+yedges[:-1])
-    return Sigma.value #, xs, ys
+    return Sigma.value
 
 
 def projected_density_gauss(pos, fov, ncells):
