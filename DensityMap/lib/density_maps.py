@@ -16,6 +16,18 @@ from matplotlib import rc
 from mypmesh import pm as mesh
 
 
+def define_unit(unit):
+    exp = np.floor(np.log10(np.abs(unit))).astype(int)
+    if exp == 21:  # simulation in [kpc]
+        unit = 'kpc'
+    elif exp == 23:  #simulation in [Mpc]
+        unit = 'Mpc'
+    else:
+        raise Exception('Dont know this unit ->', unit)
+    return unit
+
+
+
 def select_particles(pos, _centre, _width, _regiontype='box'):
     pos = pos - _centre
     if _regiontype == 'box':

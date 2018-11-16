@@ -16,8 +16,8 @@ import read_hdf5
 sys.path.insert(0, './lib/')
 import process_division as procdiv
 import density_maps as dmaps
-#sys.path.insert(0, './test/')
-#import testdensitymap as tmap
+from SubHalos import subhalo_data
+from SubHalos import particle_data
 
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, append=1)
@@ -39,10 +39,10 @@ def create_density_maps():
     # Get command line arguments
     args = {}
     args["simdir"]       = sys.argv[1]
-    args["hfdir"]        = sys.argv[2]
-    args["lcdir"]        = sys.argv[3]
-    args["ncells"]       = int(sys.argv[4])
-    args["walltime"]       = int(sys.argv[5])
+    args["lcdir"]        = sys.argv[2]
+    args["ncells"]       = int(sys.argv[3])
+    args["sml"]          = int(sys.argv[4])
+    args["walltime"]     = int(sys.argv[5])
     args["outbase"]      = sys.argv[6]
     label = args["simdir"].split('/')[-2].split('_')[2]
     lclabel = args["lcdir"].split('/')[-1][-4]
@@ -54,7 +54,6 @@ def create_density_maps():
     dfhalo = pd.DataFrame(
             {'HF_ID' : lchdf['HF_ID'].value,
              'LC_ID' : lchdf['LC_ID'].value,
-             #'LC_ID' : lchdf['Halo_ID'].value,
              'Halo_z' : lchdf['Halo_z'].value,
              'snapnum' : lchdf['snapnum'].value,
              'Vrms' : lchdf['VelDisp'].value,
@@ -62,9 +61,12 @@ def create_density_maps():
              ('HaloPosBox', 'X') : lchdf['HaloPosBox'][:, 0],
              ('HaloPosBox', 'Y') : lchdf['HaloPosBox'][:, 1],
              ('HaloPosBox', 'Z') : lchdf['HaloPosBox'][:, 2]})
-    if len(dfhalo.index.values) > 1200:
-        dfhalo = dfhalo.sample(n=1200)
+    
+    if len(dfhalo.index.values) > 2000:
+        # Limit number of halos, to keep comp. cost down
+        dfhalo = dfhalo.sample(n=2000)
     print('There are %d galaxies in this lightcone' % len(dfhalo.index.values))
+    
     nhalo_per_snapshot = dfhalo.groupby('snapnum').count()['HF_ID']
     print('devided over lightcone as:')
     print(nhalo_per_snapshot)
@@ -86,21 +88,7 @@ def create_density_maps():
         scale = 1e-3*s.header.hubble
         print(': Redshift: %f' % s.header.redshift)
         
-        ## Dark Matter
-        DM = {'Mass' : (s.data['Masses']['dm']).astype('float64'),
-              'Pos' : (s.data['Coordinates']['dm']*scale).astype('float64')}
-        ## Gas
-        Gas = {'Mass' : (s.data['Masses']['gas']).astype('float64'),
-               'Pos' : (s.data['Coordinates']['gas']*scale).astype('float64')}
-        ## Stars
-        age = (s.data['GFM_StellarFormationTime']['stars']).astype('float64')
-        Star = {'Mass' : (s.data['Masses']['stars'][age >= 0]).astype('float64'),
-                'Pos' : (s.data['Coordinates']['stars'][age >= 0, :]*scale).astype('float64')}
-        del age
-        ## BH
-        BH = {'Mass' : (s.data['Masses']['bh']).astype('float64'),
-              'Pos' : (s.data['Coordinates']['bh']*scale).astype('float64')}
-        
+        DM, Gas, Star, BH = particle_data(s.data, h, 'kpc')
         ## Run over Sub-&Halos
         for ll in range(len(dfhalosnap.index)):
             print('Lens %d of %d' % (ll, len(dfhalosnap.index)))
@@ -115,7 +103,7 @@ def create_density_maps():
                         'omega_k_0' : 0.0,
                         'h' : s.header.hubble}
             
-            smlpixel = 10  # maximum smoothing pixel length
+            smlpixel = args["sml"]  # maximum smoothing pixel length
             shpos = dfhalosnap.filter(regex='HaloPosBox').iloc[ll].values
             #time_start = time.time()
             ## BH
@@ -157,7 +145,7 @@ def create_density_maps():
 
             # Make sure that density-map if filled
             extention = 0
-            while 0.0 in sigmatotal:
+            while 0.0 in sigmatotal and (extention < 60):
                 extention += 5
                 dm_sigma = dmaps.projected_density_pmesh_adaptive(
                         pos, DM['Mass'][indx],
@@ -165,9 +153,6 @@ def create_density_maps():
                         args["ncells"],
                         hmax=smlpixel+extention)
                 sigmatotal = dm_sigma+gas_sigma+star_sigma+bh_sigma
-            #print(':: :: :: DM took %f seconds' % (time.time() - time_start))
-            #tmap.plotting(sigmatotal, args["ncells"],
-            #              dfhalosnap['fov_Mpc'].values[ll], dfhalosnap['Halo_z'].values[ll])
 
             sigma_tot.append(sigmatotal)
             out_hfid.append(dfhalosnap['HF_ID'].values[ll])
