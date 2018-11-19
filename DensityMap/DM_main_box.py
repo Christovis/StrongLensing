@@ -79,7 +79,7 @@ def create_density_maps():
         c = (const.c).to_value('km/s')
         fov_rad = 4*np.pi*(np.percentile(SH['Vrms'], 90)/c)**2
         sh_dist = (cosmo.comoving_distance(redshift)).to_value(unitlength)
-        alpha = 6  # multiplied by 4 because of Oguri&Marshall
+        alpha = 2  # multiplied by 4 because of Oguri&Marshall
         overlap = 0.5*alpha*fov_rad*sh_dist  # half of field-of-view
         print('Cuboids overlap is: %f [%s]' % (overlap, unitlength))
 
@@ -143,6 +143,7 @@ def create_density_maps():
         fov_rad = 4*np.pi*(SH['Vrms'][ll]/c)**2
         #TODO: for z=0 sh_dist=0!!!
         sh_dist = (cosmo.comoving_distance(redshift)).to_value(unitlength)
+        alpha = 1.4
         fov = alpha*fov_rad*sh_dist  #[kpc] edge-length of box
         
         # Check cuboid boundary condition,
@@ -155,32 +156,33 @@ def create_density_maps():
                         (fov*0.45, overlap))
                 continue
 
+        ## BH
+        pos, indx = dmaps.select_particles(
+                BH['Pos'], SH['Pos'][ll], #*a/h,
+                fov, 'box')
+        bh_sigma = dmaps.projected_density_pmesh(
+                pos, BH['Mass'][indx], fov, args["ncells"])
+
         ## Gas
         pos, indx = dmaps.select_particles(
                 Gas['Pos'], SH['Pos'][ll], #*a/h,
                 fov, 'box')
         gas_sigma = dmaps.projected_density_pmesh_adaptive(
-                pos, Gas['Mass'][indx],
-                fov,
-                args["ncells"],
+                pos, Gas['Mass'][indx], fov,  args["ncells"],
                 hmax=args["smlpixel"])
         ## Star
         pos, indx = dmaps.select_particles(
                 Star['Pos'], SH['Pos'][ll], #*a/h,
                 fov, 'box')
         star_sigma = dmaps.projected_density_pmesh_adaptive(
-                pos, Star['Mass'][indx],
-                fov,
-                args["ncells"],
+                pos, Star['Mass'][indx], fov, args["ncells"],
                 hmax=args["smlpixel"])
         ## DM
         pos, indx = dmaps.select_particles(
                 DM['Pos'], SH['Pos'][ll], #*a/h,
                 fov, 'box')
         dm_sigma = dmaps.projected_density_pmesh_adaptive(
-                pos, DM['Mass'][indx],
-                fov,
-                args["ncells"],
+                pos, DM['Mass'][indx], fov, args["ncells"],
                 hmax=args["smlpixel"])
         sigmatotal = dm_sigma+gas_sigma+star_sigma
        
@@ -189,9 +191,7 @@ def create_density_maps():
         while (0.0 in sigmatotal) and (extention < 60):
             extention += 5
             dm_sigma = dmaps.projected_density_pmesh_adaptive(
-                    pos, DM['Mass'][indx],
-                    fov,
-                    args["ncells"],
+                    pos, DM['Mass'][indx], fov, args["ncells"],
                     hmax=args["smlpixel"]+extention)
             sigmatotal = dm_sigma+gas_sigma+star_sigma
 
@@ -202,7 +202,7 @@ def create_density_maps():
     
     fname = args["outbase"]+'z_'+str(args["snapnum"])+'/'+'DM_'+label+'_'+str(comm_rank)+'.h5'
     hf = h5py.File(fname, 'w')
-    hf.create_dataset('DMAP', data=sigma_tot)              # density map
+    hf.create_dataset('DMAP', data=sigma_tot)              # density map in unit of simulation
     hf.create_dataset('HFID', data=np.asarray(subhalo_id)) # Rockstar sub-&halo id
     hf.create_dataset('FOV', data=np.asarray(FOV))         # field-of-view in units #[kpc, Mpc]
     #RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88

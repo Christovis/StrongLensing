@@ -29,28 +29,28 @@ def cube_of_cuboids(he, wi, de):
     side = gcd(he, gcd(wi, de))
 
 
-def cluster_subhalos(id_in, vrms_in, x_in, y_in, z_in, _boundary, comm_size):
+def cluster_subhalos_box(SH, _boundary, comm_size):
     """
     Devide simulation box into a number of equal sized parts 
     as there are processes along one axis.
     """
-    _inds = np.digitize(x_in[:], _boundary)
+    _inds = np.digitize(SH['X'][:], _boundary)
     split_size_1d = np.zeros(comm_size)
     for b in range(comm_size):
         binds = np.where(_inds == b+1)
         if b == 0:
-            id_out = id_in[binds]
-            vrms_out = vrms_in[binds]
-            x_out = x_in[binds]
-            y_out = y_in[binds]
-            z_out = z_in[binds]
+            id_out = SH['ID'][binds]
+            vrms_out = SH['Vrms'][binds]
+            x_out = SH['X'][binds]
+            y_out = SH['Y'][binds]
+            z_out = SH['Z'][binds]
             split_size_1d[b] = int(len(binds[0]))
         else:
-            id_out = np.hstack((id_out, id_in[binds]))
-            vrms_out = np.hstack((vrms_out, vrms_in[binds]))
-            x_out = np.hstack((x_out, x_in[binds]))
-            y_out = np.hstack((y_out, y_in[binds]))
-            z_out = np.hstack((z_out, z_in[binds]))
+            id_out = np.hstack((id_out, SH['ID'][binds]))
+            vrms_out = np.hstack((vrms_out, SH['Vrms'][binds]))
+            x_out = np.hstack((x_out, SH['X'][binds]))
+            y_out = np.hstack((y_out, SH['Y'][binds]))
+            z_out = np.hstack((z_out, SH['Z'][binds]))
             split_size_1d[b] = int(len(binds[0]))
     split_disp_1d = np.insert(np.cumsum(split_size_1d), 0, 0)[0:-1].astype(int)
     SH = {'ID' : id_out,

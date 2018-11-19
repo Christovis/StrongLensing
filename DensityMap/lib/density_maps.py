@@ -28,21 +28,20 @@ def define_unit(unit):
 
 
 
-def select_particles(pos, _centre, _width, _regiontype='box'):
-    pos = pos - _centre
+def select_particles(_pos, _centre, _width, _regiontype='box'):
+    _pos = _pos - _centre
     if _regiontype == 'box':
-        indx = np.logical_and(np.abs(pos[:, 0]) < 0.5*_width,
-                              np.abs(pos[:, 1]) < 0.5*_width,
-                              np.abs(pos[:, 2]) < 0.5*_width)
-        indx = np.where(indx)[0]
+        indx = np.where((np.abs(_pos[:, 0]) < 0.5*_width) &
+                        (np.abs(_pos[:, 1]) < 0.5*_width) &
+                        (np.abs(_pos[:, 2]) < 0.5*_width))[0]
     elif _regiontype == 'sphere':
         _dist = np.sqrt(_pos[:, 0]**2 +
                         _pos[:, 1]**2 +
                         _pos[:, 2]**2)
         indx = np.where(_dist <= 0.5*_width)[0]
     
-    pos = pos[indx, :] + np.ones(3)*0.5*_width
-    return pos, indx
+    _pos = _pos[indx, :] + np.ones(3)*0.5*_width
+    return _pos, indx
 
 
 
