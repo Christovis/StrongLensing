@@ -18,6 +18,29 @@ import read_hdf5
 import readlensing as rf
 
 
+def select_particles(_pos, _centre, _radius, _regiontype):
+    """
+    Input:
+        _pos[np.ndarray]
+        _centre[np.array]
+        _radius[np.float]
+        _regiontype[str]
+    Output
+        indx[np.array]
+    """
+    _pos = _pos - _centre
+    if _regiontype == 'box':
+        indx = np.where((np.abs(_pos[:, 0]) < 0.5*_radius) &
+                        (np.abs(_pos[:, 1]) < 0.5*_radius) &
+                        (np.abs(_pos[:, 2]) < 0.5*_radius))[0]
+    elif _regiontype == 'sphere':
+        _dist = np.sqrt(_pos[:, 0]**2 +
+                        _pos[:, 1]**2 +
+                        _pos[:, 2]**2)
+        indx = np.where(_dist <= _radius)[0]
+    return indx
+
+
 def load_stars(snapnum, snapfile):
     s = read_hdf5.snapshot(snapnum, snapfile)
     s.read(["Coordinates", "Masses",
@@ -25,7 +48,7 @@ def load_stars(snapnum, snapfile):
             parttype=[4])
     age = (s.data['GFM_StellarFormationTime']['stars']).astype('float64')
     star_pos = s.data['Coordinates']['stars'][age >= 0, :]
-    star_mass = s.data['Masses']['stars'][age >= 0]
+    star_mass = s.data['Masses']['stars'][age >= 0]   #[Msol]
     star_vel = s.data['Velocities']['stars'][age >= 0, :]
 
     #df = pd.DataFrame({'Mass':star_mass})
@@ -41,7 +64,17 @@ def load_stars(snapnum, snapfile):
     return star
 
 
-def load_subhalos(snapnum, snapfile, LM):
+def load_subhalos(snapnum, snapfile, LM, strong_lensing=1):
+    """
+    Input:
+        snapnum[int]: snapshot number of simulation
+        snapfile[str]: path to snapshot directory
+        LM[pickle]: pickle data of Lensing Properties
+        subhalo_tag[boolean]: switch to ouput all subhalo acting as
+                              strong lenses or not
+    Output:
+        df[pd.DataFrame]
+    """
     # load snapshot data
     s = read_hdf5.snapshot(snapnum, snapfile)
     s.group_catalog(["SubhaloIDMostbound",
@@ -55,8 +88,9 @@ def load_subhalos(snapnum, snapfile, LM):
                        'Vrms' : s.cat['SubhaloVelDisp'],
                        'Mass' : s.cat['SubhaloMass'],
                        'Rstellarhalfmass' : s.cat['SubhaloHalfmassRadType'][:, 4],
-                       'Npart' : s.cat["SubhaloLenType"][:, 4]})
-    subhalo_offset = (np.cumsum(df['Npart'].values) - df['Npart'].values).astype(int)
+                       'Npart' : s.cat["SubhaloLenType"][:, 4].astype('int')})
+    subhalo_offset = (np.cumsum(df['Npart'].values) - \
+                      df['Npart'].values).astype(int)
     df['offset'] = pd.Series(subhalo_offset, index=df.index,
                              dtype=int)
     s1 = pd.Series(dict(list(enumerate(
@@ -69,33 +103,79 @@ def load_subhalos(snapnum, snapfile, LM):
     df = df.sort_values(by=['HF_ID'])
     df = df.set_index('HF_ID')
     
-    # Find intersection
-    df = df[df.index.isin(LM['HF_ID'])]
-    lmdf = pd.DataFrame({'Rein' : LM['Sources']['Rein'],
-                         'FOV' : LM["FOV"],
-                         'HF_ID' : LM["HF_ID"]})
-    lmdf['Nimg'] = pd.Series(0, index=lmdf.index)
-    lmdf['theta'] = pd.Series(0, index=lmdf.index)
-    lmdf['delta_t'] = pd.Series(0, index=lmdf.index)
-    lmdf['mu'] = pd.Series(0, index=lmdf.index)
-    lmdf['theta'] = lmdf['theta'].astype('object')
-    lmdf['delta_t'] = lmdf['delta_t'].astype('object')
-    lmdf['mu'] = lmdf['mu'].astype('object')
-    for ll in range(len(lmdf.index.values)):
-        lmdf['Nimg'][ll] = len(LM['Sources']['mu'][ll])
-        lmdf['theta'][ll] = LM['Sources']['theta'][ll]
-        lmdf['delta_t'][ll] = LM['Sources']['delta_t'][ll]
-        lmdf['mu'][ll] = LM['Sources']['mu'][ll]
-    
-    lmdf = lmdf.sort_values(by=['HF_ID'])
-    lmdf = lmdf.set_index('HF_ID')
+    if strong_lensing == True:
+        LM = pickle.load(open(lm_file, 'rb'))
+        print('Processing the following file: \n %s' % (lm_file))
+        print('which contains %d lenses' % len(LM['HF_ID'][:]))
+        print('with max. einst. radius: %f', np.max(LM['Sources']['Rein'][:]))
+        
+        # Output only subhalos acting as gravitational strong lenses
+        # Find intersection
+        df = df[df.index.isin(LM['HF_ID'])]
+        lmdf = pd.DataFrame({'Rein' : LM['Sources']['Rein'],
+                             'ZS' : LM['zs'],
+                             'FOV' : LM["FOV"],
+                             'HF_ID' : LM["HF_ID"]})
+        lmdf['Nimg'] = pd.Series(0, index=lmdf.index)
+        lmdf['theta'] = pd.Series(0, index=lmdf.index)
+        lmdf['delta_t'] = pd.Series(0, index=lmdf.index)
+        lmdf['mu'] = pd.Series(0, index=lmdf.index)
+        lmdf['theta'] = lmdf['theta'].astype(np.ndarray)
+        lmdf['delta_t'] = lmdf['delta_t'].astype(np.ndarray)
+        lmdf['mu'] = lmdf['mu'].astype('object')
+        for ll in range(len(lmdf.index.values)):
+            lmdf['Nimg'][ll] = len(LM['Sources']['mu'][ll])
+            lmdf['theta'][ll] = LM['Sources']['theta'][ll]
+            lmdf['delta_t'][ll] = LM['Sources']['delta_t'][ll]
+            lmdf['mu'][ll] = LM['Sources']['mu'][ll]
+        
+        lmdf = lmdf.sort_values(by=['HF_ID'])
+        lmdf = lmdf.set_index('HF_ID')
+        df['ZL'] = pd.Series(s.header.redshift, index=lmdf.index)
 
-    df['Rein'] = lmdf['Rein']
-    df['Nimg'] = lmdf['Nimg']
-    df['FOV'] = lmdf['FOV']
-    df['theta'] = lmdf['theta']
-    df['delta_t'] = lmdf['delta_t']
-    df['mu'] = lmdf['mu']
+        df['Rein'] = lmdf['Rein']
+        df['ZS'] = lmdf['ZS']
+        df['Nimg'] = lmdf['Nimg']
+        df['FOV'] = lmdf['FOV']
+        df['theta'] = lmdf['theta']
+        df['delta_t'] = lmdf['delta_t']
+        df['mu'] = lmdf['mu']
+        
+        # Initialize
+        df['Mlens'] = pd.Series(0, index=df.index)
+    else:
+        # Output only subhalos do not act as gravitational strong lenses
+        df = df[~df.index.isin(LM['HF_ID'])]
+        df['ZL'] = pd.Series(s.header.redshift, index=df.index)
+        df['Rein'] = lmdf['Rein']
+        df['ZS'] = lmdf['ZS']
+        df['FOV'] = lmdf['FOV']
+        df['mu'] = lmdf['mu']
+        # Initialize
+        df['Mlens'] = pd.Series(0, index=df.index)
+
+    df['Ellipticity'] = pd.Series(0.0, dtype=np.float, index=df.index)
+    df['Prolateness'] = pd.Series(0.0, dtype=np.float, index=df.index)
+    df['VelProfRad'] = pd.Series(0, index=df.index)
+    df['VelProfRad'] = df['VelProfRad'].astype(np.ndarray)
+    df['VelProfMeas'] = pd.Series(0, index=df.index)
+    df['VelProfMeas'] = df['VelProfMeas'].astype(np.ndarray)
+    df['VrmsProfRad'] = pd.Series(0, index=df.index)
+    df['VrmsProfRad'] = df['VrmsProfRad'].astype(np.ndarray)
+    df['VrmsProfMeas'] = pd.Series(0, index=df.index)
+    df['VrmsProfMeas'] = df['VrmsProfMeas'].astype(np.ndarray)
+    df['DensProfRad'] = pd.Series(0, index=df.index)
+    df['DensProfRad'] = df['DensProfRad'].astype(np.ndarray)
+    df['DensProfMeas'] = pd.Series(0, index=df.index)
+    df['DensProfMeas'] = df['DensProfMeas'].astype(np.ndarray)
+    df['SMProfRad'] = pd.Series(0, index=df.index)
+    df['SMProfRad'] = df['SMProfRad'].astype('object')
+    df['SMProfMeas'] = pd.Series(0, index=df.index)
+    df['SMProfMeas'] = df['SMProfMeas'].astype('object')
+    df['SCVProfRad'] = pd.Series(0, index=df.index)
+    df['SCVProfRad'] = df['SCVProfRad'].astype('object')
+    df['SCVProfMeas'] = pd.Series(0, index=df.index)
+    df['SCVProfMeas'] = df['SCVProfMeas'].astype('object')
     return df
 
 
