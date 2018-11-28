@@ -48,13 +48,15 @@ def lensing_signal():
     zl = s.header.redshift
     print('Analyse sub-&halo at z=%f' % zl)
     
-    lm_file = glob.glob(args["ladir"]+"*"+"409.pickle")[0]
     label = args["simdir"].split('/')[-2].split('_')[-2]
 
     # Stellar Data
     stars = lens.load_stars(args["snapnum"], args["simdir"])
-    print('Min stellar mass', np.min(stars['Mass']))
+    dm = lens.load_dm(args["snapnum"], args["simdir"])
+    
+    indxdrop = []  # collect indices of subhalos falling through criterias
     if args["lenses"] == 1:
+        lafile = glob.glob(args["ladir"]+"*"+"_lens_"+"*"+"409.pickle")[0]
         lenses = lens.load_subhalos(args["snapnum"], args["simdir"],
                                     lafile, strong_lensing=1)
         # Run through lenses
@@ -62,16 +64,33 @@ def lensing_signal():
             print('Lenses: %f' % (ll/len(lenses.index.values)))
             # Select particles for profiles
             # bound
-            indxstart = lenses['offset'].values[ll]
-            indxend = lenses['Npart'].values[ll]+lenses['offset'].values[ll]
+            indxstart = lenses['soffset'].values[ll]
+            indxend = lenses['sNpart'].values[ll]+lenses['soffset'].values[ll]
+            print('Nr. of stars in halo: %d' % (lenses['sNpart'].values[ll]))
+            if lenses['sNpart'].values[ll] < 100:
+                indxdrop.append(lenses.index.values[ll])
+                continue
+            
             halo_stars = {'Pos' : stars['Pos'][indxstart:indxend, :],
                           'Vel' : stars['Vel'][indxstart:indxend, :],
                           'Mass' : stars['Mass'][indxstart:indxend]}
-            print('Nr. of stars in halo: %d' % len(halo_stars['Mass'][:]))
             halo_stars['Pos'] = halo_stars['Pos'] - \
                                 lenses['Pos'].values[ll]
             halo_stars['Vel'] = halo_stars['Vel'] - \
                                 lenses['Vel'].values[ll]
+            
+            
+            indxstart = lenses['dmoffset'].values[ll]
+            indxend = lenses['dmNpart'].values[ll]+lenses['dmoffset'].values[ll]
+            print('Nr. of dm in halo: %d' % (lenses['dmNpart'].values[ll]))
+            halo_dm = {'Pos' : dm['Pos'][indxstart:indxend, :],
+                       'Vel' : dm['Vel'][indxstart:indxend, :],
+                       'Mass' : dm['Mass'][indxstart:indxend]}
+            halo_dm['Pos'] = halo_dm['Pos'] - \
+                                lenses['Pos'].values[ll]
+            halo_dm['Vel'] = halo_dm['Vel'] - \
+                                lenses['Vel'].values[ll]
+
             
             ## Mass strong lensing
             Rein_arc = lenses['Rein'].values[ll]*u.arcsec
@@ -94,7 +113,7 @@ def lensing_signal():
                     halo_stars['Pos'], halo_stars['Mass'], halo_stars['Vel'],
                     'velocity', 4, s, 0.1, lenses['Rstellarhalfmass'].values[ll])
             ## Density Profile
-            lenses['DensProfRad'][ll], lenses['DensProfMeas'][ll] = lppf.profiles(
+            lenses['SDensProfRad'][ll], lenses['SDensProfMeas'][ll] = lppf.profiles(
                     halo_stars['Pos'], halo_stars['Mass'], np.array([]),
                     'density', 4, s, 0.1, 40)
             ## Mass Profile
@@ -105,8 +124,21 @@ def lensing_signal():
             lenses['SCVProfRad'][ll], lenses['SCVProfMeas'][ll] = lppf.profiles(
                     halo_stars['Pos'], halo_stars['Mass'], np.array([]),
                     'circular_velocity', 4, s, 0.1, lenses['Rstellarhalfmass'].values[ll])
+            ## Density Profile
+            lenses['DMDensProfRad'][ll], lenses['DMDensProfMeas'][ll] = lppf.profiles(
+                    halo_dm['Pos'], halo_dm['Mass'], np.array([]),
+                    'density', 4, s, 0.1, 40)
+            ## Mass Profile
+            lenses['DMMProfRad'][ll], lenses['DMMProfMeas'][ll] = lppf.profiles(
+                    halo_dm['Pos'], halo_dm['Mass'], np.array([]),
+                    'mass', 4, s, 0.1, lenses['Rstellarhalfmass'].values[ll])
+            ## Circular Velocity Profile
+            lenses['DMCVProfRad'][ll], lenses['DMCVProfMeas'][ll] = lppf.profiles(
+                    halo_dm['Pos'], halo_dm['Mass'], np.array([]),
+                    'circular_velocity', 4, s, 0.1, lenses['Rstellarhalfmass'].values[ll])
 
-        print('Saving %d lenses to .hdf5' % (len(lenses.index)))
+        lenses = lenses.drop(indxdrop)
+        print('Saving %d lenses to .hdf5' % (len(lenses.index.values)))
         zllabel = str(zl).replace('.', '')[:3].zfill(3)
         zslabel = '{:<03d}'.format(int(str(lenses['ZS'].values[0]).replace('.', '')))
         fname = (args["outbase"]+'LPPBox_%s_%s_zl%szs%s.h5' % \
@@ -114,35 +146,69 @@ def lensing_signal():
         lenses.to_hdf(fname, key='lenses', mode='w')
 
     if args["lenses"] == 0:
+        print(args["ladir"]+"*"+"_nonlens_"+"*"+"409.h5")
+        print(glob.glob(args["ladir"]+"*"+"_nonlens_"+"*"+"409.h5"))
+        lafile = glob.glob(args["ladir"]+"*"+"_nonlens_"+"*"+"409.h5")[0]
         subhalos = lens.load_subhalos(args["snapnum"], args["simdir"],
-                                    LM, strong_lensing=0)
+                                      lafile, strong_lensing=0)
         # Run through subhalos
         for ll in range(len(subhalos.index.values)):
-            print('Subhalos: %f' % (ll/len(subhalos.index.values)))
-
-            
-            ####----> Add keys <----####
+            print('Non-lenses: %f' % (ll/len(subhalos.index.values)))
             # Select particles for profiles
-            radii = [0, subhalos['Rstellarhalfmass'].values[ll]]
-            indx = lens.select_particles(
-                    stars['Pos'][:], subhalos['Pos'].values[ll],
-                    radii[-1], 'sphere')
-            if len(indx) < 100:
+            # bound
+            indxstart = subhalos['offset'].values[ll]
+            indxend = subhalos['Npart'].values[ll]+subhalos['offset'].values[ll]
+            print('Nr. of stars in halo: %d' % (subhalos['Npart'].values[ll]))
+            if subhalos['Npart'].values[ll] < 100:
+                indxdrop.append(subhalos.index.values[ll])
                 continue
+
+            halo_stars = {'Pos' : stars['Pos'][indxstart:indxend, :],
+                          'Vel' : stars['Vel'][indxstart:indxend, :],
+                          'Mass' : stars['Mass'][indxstart:indxend]}
+            halo_stars['Pos'] = halo_stars['Pos'] - \
+                                subhalos['Pos'].values[ll]
+            halo_stars['Vel'] = halo_stars['Vel'] - \
+                                subhalos['Vel'].values[ll]
+            
+            
+            ## Mass strong lensing
+            Rein_arc = subhalos['Rein'].values[ll]*u.arcsec
+            Rein = Rein_arc.to_value('rad') * \
+                    cosmo.angular_diameter_distance(zl).to('kpc')
+            subhalos['Mlens'].values[ll] = lppf.mass_lensing(Rein,
+                                                   subhalos['ZL'].values[ll],
+                                                   subhalos['ZS'].values[ll],
+                                                   cosmo)
+            
+            # Ellipticity & Prolateness
+            subhalos['Ellipticity'][ll], subhalos['Prolateness'][ll] = lppf.ellipticity_and_prolateness(halo_stars['Pos'])
+
             ## Vrms Profile
             subhalos['VrmsProfRad'][ll], subhalos['VrmsProfMeas'][ll] = lppf.profiles(
                     halo_stars['Pos'], halo_stars['Mass'], halo_stars['Vel'],
-                    'vrms', 4, s, radii[0], radii[-1])
+                    'vrms', 4, s, 0.1, subhalos['Rstellarhalfmass'].values[ll])
+            ## Velocity Profile
+            subhalos['VelProfRad'][ll], subhalos['VelProfMeas'][ll] = lppf.profiles(
+                    halo_stars['Pos'], halo_stars['Mass'], halo_stars['Vel'],
+                    'velocity', 4, s, 0.1, subhalos['Rstellarhalfmass'].values[ll])
             ## Density Profile
-            densradii = 40
             subhalos['DensProfRad'][ll], subhalos['DensProfMeas'][ll] = lppf.profiles(
                     halo_stars['Pos'], halo_stars['Mass'], np.array([]),
-                    'density', 4, s, radii[0], densradii)
+                    'density', 4, s, 0.1, 40)
+            ## Mass Profile
+            subhalos['SMProfRad'][ll], subhalos['SMProfMeas'][ll] = lppf.profiles(
+                    halo_stars['Pos'], halo_stars['Mass'], np.array([]),
+                    'mass', 4, s, 0.1, subhalos['Rstellarhalfmass'].values[ll])
+            ## Circular Velocity Profile
+            subhalos['SCVProfRad'][ll], subhalos['SCVProfMeas'][ll] = lppf.profiles(
+                    halo_stars['Pos'], halo_stars['Mass'], np.array([]),
+                    'circular_velocity', 4, s, 0.1, subhalos['Rstellarhalfmass'].values[ll])
 
-
-        print('Saving %d Subhalos to .hdf5' % (len(lenses.index)))
+        subhalos = subhalos.drop(indxdrop)
+        print('Saving %d Subhalos to .hdf5' % (len(subhalos.index.values)))
         zllabel = str(zl).replace('.', '')[:3].zfill(3)
-        zslabel = '{:<03d}'.format(int(str(lenses['ZS'].values[0]).replace('.', '')))
+        zslabel = '{:<03d}'.format(int(str(subhalos['ZS'].values[0]).replace('.', '')))
         fname = (args["outbase"]+'LPPBox_%s_%s_zl%szs%s.h5' % \
                 (label, 'nonlens', zllabel, zslabel))
         subhalos.to_hdf(fname, key='subhalos', mode='w')

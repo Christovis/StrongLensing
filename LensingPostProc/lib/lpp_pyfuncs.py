@@ -90,33 +90,29 @@ def mass_lensing(Rein, zl, zs, cosmo):
 
 
 def ellipticity_and_prolateness(_pos):
-    if len(_pos) < 100:
+    _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
+               _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,
+               _pos[:, 2].min() + (_pos[:, 2].max() - _pos[:, 2].min())/2]
+
+    # Distance to parent halo
+    _distance =  _pos - _centre 
+    
+    # Distance weighted Intertia Tensor / Reduced Inertia Tensor
+    _I = np.dot(_distance.transpose(), _distance)
+    _I /= np.sum(_distance**2)
+    #_I[~(np.eye(3) == 1)] *= -1
+
+    _eigenvalues, _eigenvectors = np.linalg.eig(_I)
+    if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
+        print('eigenvalue problem')
         ellipticity = 0
         prolateness = 0
     else:
-        _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
-                   _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,
-                   _pos[:, 2].min() + (_pos[:, 2].max() - _pos[:, 2].min())/2]
-
-        # Distance to parent halo
-        _distance =  _pos - _centre 
-        
-        # Distance weighted Intertia Tensor / Reduced Inertia Tensor
-        _I = np.dot(_distance.transpose(), _distance)
-        _I /= np.sum(_distance**2)
-        #_I[~(np.eye(3) == 1)] *= -1
-
-        _eigenvalues, _eigenvectors = np.linalg.eig(_I)
-        if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
-            print('eigenvalue problem')
-            ellipticity = 0
-            prolateness = 0
-        else:
-            _eigenvalues = np.sqrt(_eigenvalues)
-            _c, _b, _a = np.sort(_eigenvalues)
-            _tau = _a + _b + _c
-            ellipticity = (_a - _b) / (2*_tau)
-            prolateness = (_a - 2*_b + _c) / (2*_tau)
+        _eigenvalues = np.sqrt(_eigenvalues)
+        _c, _b, _a = np.sort(_eigenvalues)
+        _tau = _a + _b + _c
+        ellipticity = (_a - _b) / (2*_tau)
+        prolateness = (_a - 2*_b + _c) / (2*_tau)
             
     return ellipticity, prolateness
 
@@ -155,16 +151,8 @@ def linear_profile(radpos, mass, quantity, param, partype,
     xiden = radpos*f + a
     iden = np.int32(xiden+0.0000001)
     id = np.where(radpos < rmax)
-    print('---')
-    print('rmin, rmax:', rmin, rmax, 'number of parts: ', len(id[0]))
-    print('---')
     i = 0
-    nn = 0
-    nm = int(len(id[0])/10)
     for j in range(len(id[0])):
-        nn += 1
-        if (nn % nm) == 0:
-            print(nn, ' / ', len(id[0]))
         i = id[0][j]
         if (param < 'density'):
             if (iden[i] >= 0) & (iden[i] < NCL):
@@ -233,9 +221,6 @@ def logarithmic_profile(radpos, mass, quantity, param, partype,
     xiden = radpos*f + a
     iden = np.int32(xiden+0.0000001)
     indx = np.where(radpos < rmax)
-    print('---')
-    print('rmin, rmax:', rmin, rmax, 'number of parts:', len(indx[0]))
-    print('---')
 
     # output data
     rcoord = np.zeros(NCL, np.float)    # coordinate
