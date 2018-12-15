@@ -40,36 +40,106 @@ def srclistinit(Nl):
     return s_srcID, s_deltat, s_mu, s_zs, s_alpha, s_detA, s_theta, s_beta, s_tancritcurves, s_einsteinradius
 
 
-def mass_dynamical(Rad, PartVel, HaloPosBox, HaloVel, slices):
+def select_particles():
+    _dist = np.sqrt(_pos[:, 0]**2 +
+                    _pos[:, 1]**2 +
+                    _pos[:, 2]**2)
+    indx = np.where(_dist <= _radius)[0]
+    return indx
+
+def vrms_at_radius(particles, lvel, radius, radius_max):
+    """
+    Parameters:
+    -----------
+    ppos : ndarrau
+        Particle Positions
+    radius : float
+        Radius at which to evaluate velocity dispersion
+    Returns:
+    --------
+    """
+    particles['Vel'] -= lvel
+    _rmin = 0
+    _rmax = radius_max
+
+    _dist = np.sqrt(particles['Pos'][:, 0]**2 +
+                    particles['Pos'][:, 1]**2 +
+                    particles['Pos'][:, 2]**2)
+    print('dist test', np.min(_dist), np.max(_dist))
+    _indx = np.where((_dist >= _rmin) & (_dist <= _rmax))[0]
+    rmedian = np.median(_dist[_indx])
+
+    counter = 0
+    while np.abs(rmedian-radius)/radius > 0.1 or counter < 20:
+        
+        if rmedian > radius:
+            _rmax -= radius*0.1
+            if _rmax < radius:
+                _rmax += (radius-_rmax) + radius*0.01
+
+        else:
+            _rmin += radius*0.1
+            if _rmin > radius:
+                _rmin -= (_rmin - radius) - radius*0.01
+        
+        _indx = np.where((_dist >= _rmin) & (_dist <= _rmax))[0]
+        rmedian = np.median(_dist[_indx])
+        print('rmedian/radius', np.abs(rmedian-radius)/radius, len(_indx), counter)
+        counter += 1
+    
+    vrms = velocity_dispersion(particles['Vel'])
+    return vrms
+
+def mass_dynamical(sigma, radius):
     """
     Estimate dynamical mass based on virial radius and
     stellar velocity dispersion
-    Input:
-        Rein: Einstein radii
-        PartVel: Velocity of Particles
-        HaloPosBox: Position of Lens
-        HaloVel: Velocity of Lens
-        slices: on which vrms is calculated
+    Parameters:
+    -----------
+    Rein : float
+        Einstein radii [kpc]
+    vrms : float
+        velocity dispersion [km/s]
+    PartVel : ndarray
+        Velocity of Particles
+    HaloPosBox : ndarray
+        Position of Lens
+    HaloVel : ndarray
+        Velocity of Lens
+    slices  : ndarray
+        on which vrms is calculated
 
-    Output:
-        Mdyn: dynamical mass in solar mass
+    Returns:
+    --------
+    Mdyn : float
+        dynamical mass in solar mass
     """
-    sigma = cf.call_vrms_gal(PartVel[:, 0], PartVel[:, 1], PartVel[:, 2],
-                             HaloVel[0], HaloVel[1], HaloVel[2], slices) * \
-            (u.kilometer/u.second)
+    #TODO: remove from this function and make it stand alone
+    #sigma = cf.call_vrms_gal(PartVel[:, 0], PartVel[:, 1], PartVel[:, 2],
+    #                         HaloVel[0], HaloVel[1], HaloVel[2], slices) * \
+    #        (u.kilometer/u.second)
     
     # Virial Theorem
-    Mdyn = (sigma.to('m/s')**2*Rad.to('m')/const.G.to('m3/(kg*s2)')).to_value('M_sun')
+    #Mdyn = (sigma.to('m/s')**2*Rad.to('m')/const.G.to('m3/(kg*s2)')).to_value('M_sun')
+    Mdyn = (sigma.to('km/s')**2*radius.to('m')/const.G.to('m3/(kg*s2)')).to_value('M_sun')
     return Mdyn
 
 
 def sigma_crit(zLens, zSource, cosmo):
+    """
+    Parameters:
+    -----------
+    Returns:
+    --------
+    sig_crit : float
+        Critical surface density [kg/m^2]
+    """
     Ds = cosmo.angular_diameter_distance(zSource)
     Dl = cosmo.angular_diameter_distance(zLens)
     Dls = cosmo.angular_diameter_distance_z1z2(zLens, zSource)
     D = (Ds/(Dl*Dls)).to(1/u.meter)
     sig_crit = (const.c**2/(4*np.pi*const.G))*D
-    return sig_crit
+    return sig_crit.to_value('M_sun/kpc^2')
 
 
 def mass_lensing(Rein, zl, zs, cosmo):
@@ -85,42 +155,88 @@ def mass_lensing(Rein, zl, zs, cosmo):
         Mlens: lensing mass in solar mass
     """
     sig_crit = sigma_crit(zl, zs, cosmo)
-    Mlens = (np.pi*Rein.to(u.meter)**2*sig_crit).to_value('M_sun')
+    Mlens = (np.pi*Rein**2*sig_crit) #.to_value('M_sun')
     return Mlens
 
 
-def ellipticity_and_prolateness(_pos):
-    _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
-               _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,
-               _pos[:, 2].min() + (_pos[:, 2].max() - _pos[:, 2].min())/2]
+def ellipticity_and_prolateness(_pos, dimensions):
+    """
+    Parameters:
+    -----------
+    pos : ndarray
+        particle positions
+    dimensions : int
+        Dimensions
+    Returns:
+    --------
+    ellipticity : float
+    prolateness : float
+    """
+    if dimensions == 2:
+        _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
+                   _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,
+                   _pos[:, 2].min() + (_pos[:, 2].max() - _pos[:, 2].min())/2]
+        # Distance to parent halo
+        _distance =  _pos - _centre 
+        # Distance weighted Intertia Tensor / Reduced Inertia Tensor
+        _I = np.dot(_distance.transpose(), _distance)
+        _I /= np.sum(_distance**2)
 
-    # Distance to parent halo
-    _distance =  _pos - _centre 
-    
-    # Distance weighted Intertia Tensor / Reduced Inertia Tensor
-    _I = np.dot(_distance.transpose(), _distance)
-    _I /= np.sum(_distance**2)
-    #_I[~(np.eye(3) == 1)] *= -1
+        _eigenvalues, _eigenvectors = np.linalg.eig(_I)
+        if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
+            print('eigenvalue problem')
+            ellipticity = 0
+            prolateness = 0
+        else:
+            _eigenvalues = np.sqrt(_eigenvalues)
+            _c, _b, _a = np.sort(_eigenvalues)
+            _tau = _a + _b + _c
+            ellipticity = (_a - _b) / (2*_tau)
+            prolateness = (_a - 2*_b + _c) / (2*_tau)
+            
+    elif dimensions == 3:
+        _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
+                   _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,
+                   _pos[:, 2].min() + (_pos[:, 2].max() - _pos[:, 2].min())/2]
+        # Distance to parent halo
+        _distance =  _pos - _centre 
+        # Distance weighted Intertia Tensor / Reduced Inertia Tensor
+        _I = np.dot(_distance.transpose(), _distance)
+        _I /= np.sum(_distance**2)
 
-    _eigenvalues, _eigenvectors = np.linalg.eig(_I)
-    if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
-        print('eigenvalue problem')
-        ellipticity = 0
-        prolateness = 0
-    else:
-        _eigenvalues = np.sqrt(_eigenvalues)
-        _c, _b, _a = np.sort(_eigenvalues)
-        _tau = _a + _b + _c
-        ellipticity = (_a - _b) / (2*_tau)
-        prolateness = (_a - 2*_b + _c) / (2*_tau)
+        _eigenvalues, _eigenvectors = np.linalg.eig(_I)
+        if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
+            print('eigenvalue problem')
+            ellipticity = 0
+            prolateness = 0
+        else:
+            _eigenvalues = np.sqrt(_eigenvalues)
+            _c, _b, _a = np.sort(_eigenvalues)
+            _tau = _a + _b + _c
+            ellipticity = (_a - _b) / (2*_tau)
+            prolateness = (_a - 2*_b + _c) / (2*_tau)
             
     return ellipticity, prolateness
+
+
+def projection(vec, proj):
+    """
+    Parameters:
+    -----------
+    Returns:
+    --------
+    """
+    vec = vec*proj
+    return vec
 
 
 def velocity_dispersion(_velocity):
     """
     Calculate velocity dispersion
-    Input: 
+    Parameters:
+    -----------
+    Returns:
+    --------
         _velocity[np.ndarray] : particle velocities
     """
     #TODO: along line-of-sight
@@ -204,10 +320,21 @@ def logarithmic_profile(radpos, mass, quantity, param, partype,
                         rmin, rmax, sim, NCL=100):
     """
     Input:
-        position: Radial Particle Position
+        radpos[np.array]: radial particle position
+        mass[np.array]: particle mass
+        quantity[np.array]: e.g. temperature, entropy, etc. of particles
+        param[str]: what quantity shall be analyzed
+        partype[int]: 0:gas, 1:dm, 4:stars, 5:bh
+        rmin, rmax[float]: boundaries of profile
+        sim[dict]: simulation header containing constants and parameters
+        NCL[int]: number of radial bins
+    Output:
+        rcoord[np.array]: radial coordinates
+        diffprof[np.array]: average of measured quantity in radial bins
     """
     rmin = np.log10(rmin)
     rmax = np.log10(rmax)
+    radpos = np.log10(radpos)
     
     # nshell -> number of particles in shell
     # dshell -> 
@@ -215,11 +342,9 @@ def logarithmic_profile(radpos, mass, quantity, param, partype,
     nshell = np.zeros(NCL, np.int32)
     dshell = np.zeros(NCL, np.float)
     f, a, dx = log_radii_bin_factors(rmin, rmax, NCL) 
-    # particle distnace
-    radpos = np.log10(radpos)
     # xiden(radpos==min)=0; xiden(radpos==max)=NCL
     xiden = radpos*f + a
-    iden = np.int32(xiden+0.0000001)
+    iden = np.int32(xiden+1e-6)
     indx = np.where(radpos < rmax)
 
     # output data
@@ -319,7 +444,7 @@ def profiles(position, mass, quantity, param, partype, sim, rmin, rmax, NCL=100,
                      (position[:, 2])**2)
     if param == 'velocity':
         quantity = np.asarray([np.linalg.norm(vec) for vec in quantity])
-
+    
     if (ilog == False):
         rcoord, diffprof = linear_profile(
                 radpos, mass, quantity, param, partype, rmin, rmax,

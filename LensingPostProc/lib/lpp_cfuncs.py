@@ -15,19 +15,39 @@ f_vrms.cal_vrms_gal.argtypes =[np.ctypeslib.ndpointer(dtype = ct.c_float, ndim=1
                                ct.c_int, ct.c_int, ct.c_float]
 f_vrms.cal_vrms_gal.restype  = ct.c_float
 
-def call_vrms_gal(sv1, sv2, sv3, gv1, gv2, gv3, slices):
-    Np = len(sv1)
+def call_vrms_gal(particle_velocity, halo_velocity, slices):
+    """
+    Parameters:
+    -----------
+    particle_velocity : ndarray 2D
+        particle velocities
+    halo_velocity : ndarray 1D
+        host halo velocity
+    slices : ndarray 1D or 2D
+        planes on which to evaluate velocity dispersion
+
+    Returns:
+    --------
+    sigma : float
+        velocity dispersion
+    """
+    Np = len(particle_velocity)
     Np = ct.c_int(Np)
     Ns = len(slices)
     Ns = ct.c_int(Ns)
-    sv1 = np.array(sv1, dtype=ct.c_float)
-    sv2 = np.array(sv2, dtype=ct.c_float)
-    sv3 = np.array(sv3, dtype=ct.c_float)
-    gv1 = ct.c_float(gv1)  #np.array(gv1, dtype=ct.c_float)
-    gv2 = ct.c_float(gv2)  #np.array(gv2, dtype=ct.c_float)
-    gv3 = ct.c_float(gv3)  #np.array(gv3, dtype=ct.c_float)
-    slices = slices.T
-    slices1 = slices[0]; slices2=slices[1]; slices3=slices[2]
+    sv1 = np.array(particle_velocity[:, 0], dtype=ct.c_float)
+    sv2 = np.array(particle_velocity[:, 1], dtype=ct.c_float)
+    sv3 = np.array(particle_velocity[:, 2], dtype=ct.c_float)
+    gv1 = ct.c_float(halo_velocity[0])  #np.array(gv1, dtype=ct.c_float)
+    gv2 = ct.c_float(halo_velocity[1])  #np.array(gv2, dtype=ct.c_float)
+    gv3 = ct.c_float(halo_velocity[2])  #np.array(gv3, dtype=ct.c_float)
+    if len(slices.shape) == 1:  # if only one slice (1D)
+        slices = slices.reshape((1, 3))
+        slices = slices.T
+        slices1 = slices[0]; slices2=slices[1]; slices3=slices[2]
+    elif len(slices.shape) == 2:  # if only one slice (2D)
+        slices = slices.T
+        slices1 = slices[0]; slices2=slices[1]; slices3=slices[2]
     slices1 = np.array(slices1, dtype=ct.c_float)
     slices2 = np.array(slices2, dtype=ct.c_float)
     slices3 = np.array(slices3, dtype=ct.c_float)

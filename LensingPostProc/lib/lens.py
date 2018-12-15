@@ -1,9 +1,8 @@
 from __future__ import division
-import os, sys, glob, logging
+import os, sys, glob
 import numpy as np
 import pickle
 import pandas as pd
-import h5py  # commands change in py3.x
 from astropy import units as u
 from astropy import constants as const
 from astropy.cosmology import LambdaCDM
@@ -15,18 +14,23 @@ import lpp_cfuncs as cf
 import lpp_pyfuncs as lppf
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import read_hdf5
+from find_bound_particles import BoundParticleFinder
 import readlensing as rf
+pd.options.mode.chained_assignment = None  # Disable warning; default='warn'
 
 
 def select_particles(_pos, _centre, _radius, _regiontype):
     """
-    Input:
-        _pos[np.ndarray]
-        _centre[np.array]
-        _radius[np.float]
-        _regiontype[str]
-    Output
-        indx[np.array]
+    Parameters
+    ----------
+    _pos : np.ndarray
+    _centre : np.array
+    _radius : np.float
+    _regiontype : str
+    
+    Returns
+    -------
+    indx : np.array
     """
     _pos = _pos - _centre
     if _regiontype == 'box':
@@ -42,26 +46,62 @@ def select_particles(_pos, _centre, _radius, _regiontype):
 
 
 def load_stars(snapnum, snapfile):
+    """
+    Parameters
+    ----------
+    snapnum : int
+        snapshot number of simulation
+    snapfile : str
+        path to snapshot directory
+    
+    Returns
+    -------
+    indx : np.array
+    """
     s = read_hdf5.snapshot(snapnum, snapfile)
     s.read(["Coordinates", "Masses",
-            "Velocities", "GFM_StellarFormationTime"],
+            "Velocities",
+            "GFM_StellarFormationTime",
+            "GFM_StellarPhotometrics"],
             parttype=[4])
     age = (s.data['GFM_StellarFormationTime']['stars']).astype('float64')
     star_pos = s.data['Coordinates']['stars'][age >= 0, :]
-    star_mass = s.data['Masses']['stars'][age >= 0]   #[Msol]
     star_vel = s.data['Velocities']['stars'][age >= 0, :]
+    star_mass = s.data['Masses']['stars'][age >= 0]   #[Msol]
+    star_mag = s.data['GFM_StellarPhotometrics']['stars'][age >= 0]  #[Bol. Mag]
 
-    #df = pd.DataFrame({'Mass':star_mass})
-    #s1 = pd.Series(dict(list(enumerate(star_pos))),
-    #               index=df.index)
-    #df['Pos'] = s1
-    #s1 = pd.Series(dict(list(enumerate(star_vel))),
-    #               index=df.index)
-    #df['Vel'] = s1
     star = {'Pos' : star_pos,
             'Vel' : star_vel,
-            'Mass' : star_mass}
+            'Mass' : star_mass,
+            'Mag' : star_mag,
+            }
     return star
+
+
+def load_baryons(snapnum, snapfile):
+    """
+    Parameters
+    ----------
+    snapnum : int
+        snapshot number of simulation
+    snapfile : str
+        path to snapshot directory
+    
+    Returns
+    -------
+    indx : np.array
+    """
+    s = read_hdf5.snapshot(snapnum, snapfile)
+    s.read(["Coordinates", 
+            "Masses",
+            "Velocities",],
+            parttype=[0])
+
+    gas = {'Pos' : s.data['Coordinates']['gas'],
+            'Vel' : s.data['Velocities']['gas'],
+            'Mass' : s.data['Masses']['gas'],
+            }
+    return gas
 
 
 def load_dm(snapnum, snapfile):
@@ -71,7 +111,7 @@ def load_dm(snapnum, snapfile):
     dm_pos = s.data['Coordinates']['dm']
     dm_mass = s.data['Masses']['dm']   #[Msol]
     dm_vel = s.data['Velocities']['dm']
-    
+
     dm = {'Pos' : dm_pos,
             'Vel' : dm_vel,
             'Mass' : dm_mass}
@@ -80,14 +120,21 @@ def load_dm(snapnum, snapfile):
 
 def load_subhalos(snapnum, snapfile, lafile, strong_lensing=1):
     """
-    Input:
-        snapnum[int]: snapshot number of simulation
-        snapfile[str]: path to snapshot directory
-        lafile[str]: path to lensing analysis results
-        subhalo_tag[boolean]: switch to ouput all subhalo acting as
-                              strong lenses or not
-    Output:
-        df[pd.DataFrame]
+    Parameters
+    ----------
+    snapnum : int
+        snapshot number of simulation
+    snapfile : str
+        path to snapshot directory
+    lafile : str
+        path to lensing analysis results
+    subhalo_tag : boolean
+        switch to ouput all subhalo acting as
+        strong lenses or not
+
+    Returns
+    -------
+    df : pd.DataFrame
     """
     # load snapshot data
     s = read_hdf5.snapshot(snapnum, snapfile)
@@ -97,31 +144,26 @@ def load_subhalos(snapnum, snapfile, lafile, strong_lensing=1):
                      "SubhaloMass",
                      "SubhaloVelDisp",
                      "SubhaloHalfmassRadType",
-                     "SubhaloLenType"])
+                     "SubhaloLenType",
+                     "GroupLenType",
+                     "GroupNsubs",
+                     "GroupFirstSub"])
     df = pd.DataFrame({'HF_ID' : s.cat['SubhaloIDMostbound'],
                        'Vrms' : s.cat['SubhaloVelDisp'],
                        'Mass' : s.cat['SubhaloMass'],
                        'Rstellarhalfmass' : s.cat['SubhaloHalfmassRadType'][:, 4],
                        'sNpart' : s.cat["SubhaloLenType"][:, 4].astype('int'),
                        'dmNpart' : s.cat["SubhaloLenType"][:, 1].astype('int')})
-    subhalo_offset = (np.cumsum(df['sNpart'].values) - \
-                      df['sNpart'].values).astype(int)
-    df['soffset'] = pd.Series(subhalo_offset, index=df.index, dtype=int)
-    subhalo_offset = (np.cumsum(df['dmNpart'].values) - \
-                      df['dmNpart'].values).astype(int)
-    df['dmoffset'] = pd.Series(subhalo_offset, index=df.index, dtype=int)
-    s1 = pd.Series(dict(list(enumerate(
-        s.cat['SubhaloPos']
-        ))), index=df.index)
+    s1 = pd.Series(dict(list(enumerate(s.cat['SubhaloPos']))), index=df.index)
     df['Pos'] = s1
-    s1 = pd.Series(dict(list(enumerate(s.cat['SubhaloVel']))),
-                   index=df.index)
+    s1 = pd.Series(dict(list(enumerate(s.cat['SubhaloVel']))), index=df.index)
     df['Vel'] = s1
+    df['Index'] = df.index.values
     df = df.sort_values(by=['HF_ID'])
     df = df.set_index('HF_ID')
-    
+
     if strong_lensing == True:
-        LA = pickle.load(open(lafile, 'rb'))
+        LA = pickle.load(open(lafile, 'rb'))  #, encoding='latin1')
         print('Processing the following file: \n %s' % (lafile))
         print('which contains %d lenses' % len(LA['HF_ID'][:]))
         print('with max. einst. radius: %f', np.max(LA['Sources']['Rein'][:]))
@@ -133,17 +175,16 @@ def load_subhalos(snapnum, snapfile, lafile, strong_lensing=1):
                              'FOV' : LA["FOV"],
                              'HF_ID' : LA["HF_ID"]})
         ladf['Nimg'] = pd.Series(0, index=ladf.index)
-        ladf['theta'] = pd.Series(0, index=ladf.index)
-        ladf['delta_t'] = pd.Series(0, index=ladf.index)
-        ladf['mu'] = pd.Series(0, index=ladf.index)
-        ladf['theta'] = ladf['theta'].astype(np.ndarray)
-        ladf['delta_t'] = ladf['delta_t'].astype(np.ndarray)
-        ladf['mu'] = ladf['mu'].astype('object')
+        ladf['theta'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+        ladf['delta_t'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+        ladf['mu'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+        ladf['DMAP'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
         for ll in range(len(ladf.index.values)):
             ladf['Nimg'][ll] = len(LA['Sources']['mu'][ll])
             ladf['theta'][ll] = LA['Sources']['theta'][ll]
             ladf['delta_t'][ll] = LA['Sources']['delta_t'][ll]
             ladf['mu'][ll] = LA['Sources']['mu'][ll]
+            ladf['DMAP'][ll] = LA['DMAP'][ll]
         
         ladf = ladf.sort_values(by=['HF_ID'])
         ladf = ladf.set_index('HF_ID')
@@ -158,7 +199,15 @@ def load_subhalos(snapnum, snapfile, lafile, strong_lensing=1):
         df['theta'] = ladf['theta']
         df['delta_t'] = ladf['delta_t']
         df['mu'] = ladf['mu']
-        
+        df['DMAP'] = ladf['DMAP']
+       
+        # Find bound particles for lenses
+        BPF = BoundParticleFinder(s)
+        subhalo_particles = BPF.find_bound_subhalo_particles(df['Index'].values, 4)
+        df['BPF'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+        for ll in range(len(df.index.values)):
+            df['BPF'][ll] = subhalo_particles[ll].astype(int)
+
         # Initialize
         df['Mlens'] = pd.Series(0, index=df.index)
     elif strong_lensing == False:
@@ -181,8 +230,12 @@ def load_subhalos(snapnum, snapfile, lafile, strong_lensing=1):
         # Initialize
         df['Mlens'] = pd.Series(0, index=df.index)
 
-    df['Ellipticity'] = pd.Series(0.0, dtype=np.float, index=df.index)
-    df['Prolateness'] = pd.Series(0.0, dtype=np.float, index=df.index)
+    # Initialize
+    df['Mdyn'] = pd.Series(0, index=df.index)
+    df['Vrms_Rein'] = pd.Series(0, index=df.index)
+    df['Vrms_Rhm'] = pd.Series(0, index=df.index)
+    df['Ellip3D'] = pd.Series(0.0, dtype=np.float, index=df.index)
+    df['Prolat3D'] = pd.Series(0.0, dtype=np.float, index=df.index)
     df['VelProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
     df['VelProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
     df['VrmsProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
@@ -193,12 +246,12 @@ def load_subhalos(snapnum, snapfile, lafile, strong_lensing=1):
     df['SMProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
     df['SCVProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
     df['SCVProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['DMDensProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['DMDensProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['DMMProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['DMMProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['DMCVProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['DMCVProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    #df['DMDensProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    #df['DMDensProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    #df['DMMProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    #df['DMMProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    #df['DMCVProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    #df['DMCVProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
     return df
 
 
@@ -221,7 +274,6 @@ class Lenses():
                                     "Vrms_rks" : [],
                                     "Rein"  : []})
         elif self.halofinder == 'Subfind':
-            print(LM['LC_ID'])
             self.df = pd.DataFrame({"HF_ID" : LM['HF_ID'][:],
                                     #"LC_ID" : LM['LC_ID'][:],
                                     "SrcID" : np.zeros(len(LM['HF_ID'][:])), 
@@ -276,8 +328,6 @@ class Lenses():
             df['Vel'] = s1
             df = df.sort_values(by=['HF_ID'])
             df = df.set_index('HF_ID')
-            print('HF_DI test', df.index.values)
-            print(self.df.index.intersection(df.index))
             
             indx = self.df.index.intersection(df.index)
             self.df["M200"]
