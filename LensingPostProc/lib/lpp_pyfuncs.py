@@ -159,6 +159,9 @@ def mass_lensing(Rein, zl, zs, cosmo):
     return Mlens
 
 
+def ellipticity_and_prolateness_2D(dmap):
+
+
 def ellipticity_and_prolateness(_pos, dimensions):
     """
     Parameters:
@@ -173,27 +176,7 @@ def ellipticity_and_prolateness(_pos, dimensions):
     prolateness : float
     """
     if dimensions == 2:
-        _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
-                   _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,
-                   _pos[:, 2].min() + (_pos[:, 2].max() - _pos[:, 2].min())/2]
-        # Distance to parent halo
-        _distance =  _pos - _centre 
-        # Distance weighted Intertia Tensor / Reduced Inertia Tensor
-        _I = np.dot(_distance.transpose(), _distance)
-        _I /= np.sum(_distance**2)
-
-        _eigenvalues, _eigenvectors = np.linalg.eig(_I)
-        if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
-            print('eigenvalue problem')
-            ellipticity = 0
-            prolateness = 0
-        else:
-            _eigenvalues = np.sqrt(_eigenvalues)
-            _c, _b, _a = np.sort(_eigenvalues)
-            _tau = _a + _b + _c
-            ellipticity = (_a - _b) / (2*_tau)
-            prolateness = (_a - 2*_b + _c) / (2*_tau)
-            
+    ellipticity = ellipticity_and_prolateness_2D(_pos) 
     elif dimensions == 3:
         _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
                    _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,

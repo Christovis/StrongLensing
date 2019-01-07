@@ -1,6 +1,7 @@
 from __future__ import division
 import os, sys, glob, logging
 import numpy as np
+print('Numpy is in:', np.__file__)
 import pickle
 import pandas as pd
 import h5py
@@ -14,9 +15,9 @@ import lpp_pyfuncs as lppf
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/lib/')
 import read_hdf5
 import readlensing as rf
-sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/')
-import LM_main_box
-from LM_main_box import plant_Tree # Why do I need to load this???
+#sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/')
+#import LM_main_box
+#from LM_main_box import plant_Tree # Why do I need to load this???
 
 # Set up logging and parse arguments
 logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
@@ -61,7 +62,8 @@ def lensing_signal():
         for ll in range(len(lenses.index.values)):
             print('Lenses: %f' % (ll/len(lenses.index.values)))
             lens = lenses.loc[lenses.index.values[ll]]
-          
+            print('::: lens', lens.keys())
+
             indx = load.select_particles(stars['Pos'], lens['Pos'], lens['Rstellarhalfmass']*1.5, 'sphere')
             halo_stars = {'Pos' : stars['Pos'][indx, :],
                           'Vel' : stars['Vel'][indx, :],
@@ -94,14 +96,11 @@ def lensing_signal():
 
             
             ## Mass strong lensing
-            Rein_arc = lenses['Rein'].values[ll]*u.arcsec
+            Rein_arc = lens['Rein']*u.arcsec
             Rein = Rein_arc.to_value('rad') * \
                     cosmo.angular_diameter_distance(zl).to('kpc')
             lenses['Mlens'].values[ll] = lppf.mass_lensing(
-                Rein.to_value('kpc'),
-                lenses['ZL'].values[ll],
-                lenses['ZS'].values[ll],
-                cosmo)
+                Rein.to_value('kpc'), lens['ZL'], lens['ZS'], cosmo)
 
             # Mass stellar kinematics
             vrms = lppf.vrms_at_radius(
@@ -113,6 +112,8 @@ def lensing_signal():
                 lenses['Mdyn'][ll] = lppf.mass_dynamical(vrms*u.km/u.second, Rein)
             
             # Ellipticity & Prolateness
+            #lenses['Ellip3D'][ll], lenses['Prolat3D'][ll] = lppf.ellipticity_and_prolateness(
+            #        lens['DMAP'], 2)
             lenses['Ellip3D'][ll], lenses['Prolat3D'][ll] = lppf.ellipticity_and_prolateness(
                     halo_stars['Pos'], 3)
             radii = np.array([0.05, 1])*lenses['Rstellarhalfmass'].values[ll]
