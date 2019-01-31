@@ -47,7 +47,7 @@ def select_particles():
     indx = np.where(_dist <= _radius)[0]
     return indx
 
-def vrms_at_radius(particles, lvel, radius, radius_max):
+def vrms_at_radius(particles, lvel, radius,):
     """
     Parameters:
     -----------
@@ -58,37 +58,44 @@ def vrms_at_radius(particles, lvel, radius, radius_max):
     Returns:
     --------
     """
-    particles['Vel'] -= lvel
-    _rmin = 0
-    _rmax = radius_max
+    pvel = particles['Vel'] - lvel
+    _rmin = float(radius)*(1-0.1)
+    _rmax = float(radius)*(1+0.1)
 
     _dist = np.sqrt(particles['Pos'][:, 0]**2 +
                     particles['Pos'][:, 1]**2 +
                     particles['Pos'][:, 2]**2)
-    print('dist test', np.min(_dist), np.max(_dist))
     _indx = np.where((_dist >= _rmin) & (_dist <= _rmax))[0]
     rmedian = np.median(_dist[_indx])
 
     counter = 0
-    while np.abs(rmedian-radius)/radius > 0.1 or counter < 20:
+    while (np.abs(rmedian-radius)/radius < 0.1) and \
+          (len(_indx) < 100) and \
+          (counter < 20):
         
         if rmedian > radius:
-            _rmax -= radius*0.1
-            if _rmax < radius:
-                _rmax += (radius-_rmax) + radius*0.01
+            _rmin -= radius*0.1
+            if _rmin < 0:
+                _rmin = 0
 
         else:
-            _rmin += radius*0.1
-            if _rmin > radius:
-                _rmin -= (_rmin - radius) - radius*0.01
-        
+            _rmax += radius*0.1
+
         _indx = np.where((_dist >= _rmin) & (_dist <= _rmax))[0]
         rmedian = np.median(_dist[_indx])
-        print('rmedian/radius', np.abs(rmedian-radius)/radius, len(_indx), counter)
         counter += 1
     
-    vrms = velocity_dispersion(particles['Vel'])
-    return vrms
+    if len(_indx) < 100:
+        return 0
+    else:
+        vrms = velocity_dispersion(pvel[_indx, :])
+        #print('rmedian/radius',
+        #      radius, _rmin, _rmax, 
+        #      np.abs(rmedian-radius)/radius,
+        #      len(_indx),
+        #      vrms)
+        return vrms #, _rmin, _rmax
+
 
 def mass_dynamical(sigma, radius):
     """
@@ -121,7 +128,11 @@ def mass_dynamical(sigma, radius):
     
     # Virial Theorem
     #Mdyn = (sigma.to('m/s')**2*Rad.to('m')/const.G.to('m3/(kg*s2)')).to_value('M_sun')
-    Mdyn = (sigma.to('km/s')**2*radius.to('m')/const.G.to('m3/(kg*s2)')).to_value('M_sun')
+    #K_coeff = 5 # https://arxiv.org/abs/1307.4376
+    #Mdyn = K_coeff*(sigma.to('km/s')**2*radius.to('m')/const.G.to('m3/(kg*s2)')).to_value('M_sun')
+    # https://arxiv.org/abs/1307.4376
+    print(sigma.to_value('km/s'))
+    Mdyn = (sigma.to_value('km/s')/200)**3.6*(radius.to_value('kpc')/3)**0.35*2.1*1e11  #Msun
     return Mdyn
 
 
@@ -159,10 +170,47 @@ def mass_lensing(Rein, zl, zs, cosmo):
     return Mlens
 
 
-def ellipticity_and_prolateness_2D(dmap):
+def morphology2D(_pos, los):
+    """
+    https://arxiv.org/abs/0906.2785
+    Parameters:
+    -----------
+    pos : ndarray
+        particle positions
+    los : array
+        line-of-sight projection axes
+    Returns:
+    --------
+    ellipticity : float, 0<e<1
+    """
+    axes = [0, 1, 2]
+    axes.remove(los)
+
+    #TODO: definition of _centre better if based on subhalo finder
+    _centre = [_pos[:, axes[0]].min()+(_pos[:, axes[0]].max()-_pos[:, axes[0]].min())/2,
+               _pos[:, axes[1]].min()+(_pos[:, axes[1]].max()-_pos[:, axes[1]].min())/2]
+    # Distance to parent halo
+    _distance =  _pos[:, axes] - _centre
+    # Distance weighted Intertia Tensor / Reduced Inertia Tensor
+    _I = np.dot(_distance.transpose(), _distance)
+    _I /= np.sum(_distance**2)
+
+    _eigenvalues, _eigenvectors = np.linalg.eig(_I)
+    if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
+        ellipticity = 0
+        prolateness = 0
+    else:
+        _eigenvalues = np.sqrt(_eigenvalues)
+        _indx = np.argsort(_eigenvalues)
+        _b, _a = np.sort(_eigenvalues)
+        pa = np.arccos(np.dot(_eigenvectors[_indx[-1]], np.array([0, 1])))*180/np.pi
+        eccentricity = np.sqrt(1 - _b**2/_a**2)
+        ellipticity = 1 - _b/_a
+        
+    return pa, eccentricity, ellipticity
 
 
-def ellipticity_and_prolateness(_pos, dimensions):
+def morphology3D(_pos):
     """
     Parameters:
     -----------
@@ -175,31 +223,29 @@ def ellipticity_and_prolateness(_pos, dimensions):
     ellipticity : float
     prolateness : float
     """
-    if dimensions == 2:
-    ellipticity = ellipticity_and_prolateness_2D(_pos) 
-    elif dimensions == 3:
-        _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
-                   _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,
-                   _pos[:, 2].min() + (_pos[:, 2].max() - _pos[:, 2].min())/2]
-        # Distance to parent halo
-        _distance =  _pos - _centre 
-        # Distance weighted Intertia Tensor / Reduced Inertia Tensor
-        _I = np.dot(_distance.transpose(), _distance)
-        _I /= np.sum(_distance**2)
+    _centre = [_pos[:, 0].min() + (_pos[:, 0].max() - _pos[:, 0].min())/2,
+               _pos[:, 1].min() + (_pos[:, 1].max() - _pos[:, 1].min())/2,
+               _pos[:, 2].min() + (_pos[:, 2].max() - _pos[:, 2].min())/2]
+    # Distance to parent halo
+    _distance =  _pos - _centre 
+    # Distance weighted Intertia Tensor / Reduced Inertia Tensor
+    _I = np.dot(_distance.transpose(), _distance)
+    _I /= np.sum(_distance**2)
 
-        _eigenvalues, _eigenvectors = np.linalg.eig(_I)
-        if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
-            print('eigenvalue problem')
-            ellipticity = 0
-            prolateness = 0
-        else:
-            _eigenvalues = np.sqrt(_eigenvalues)
-            _c, _b, _a = np.sort(_eigenvalues)
-            _tau = _a + _b + _c
-            ellipticity = (_a - _b) / (2*_tau)
-            prolateness = (_a - 2*_b + _c) / (2*_tau)
+    _eigenvalues, _eigenvectors = np.linalg.eig(_I)
+    if ((_eigenvalues < 0).sum() > 0) or (np.sum(_eigenvalues) == 0):
+        print('eigenvalue problem')
+        ellipticity = 0
+        prolateness = 0
+    else:
+        _eigenvalues = np.sqrt(_eigenvalues)
+        _c, _b, _a = np.sort(_eigenvalues)
+        _tau = _a + _b + _c
+        ellipticity = (_a - _b) / (2*_tau)
+        eccentricity = np.sqrt(1 - _b**2/_a**2)
+        prolateness = (_a - 2*_b + _c) / (2*_tau)
             
-    return ellipticity, prolateness
+    return ellipticity, eccentricity, prolateness
 
 
 def projection(vec, proj):
@@ -439,4 +485,23 @@ def profiles(position, mass, quantity, param, partype, sim, rmin, rmax, NCL=100,
 
     return rcoord, diffprof
 
+
+def fit_function(r, rho_o, r_o, a):
+    return rho_o*(r/r_o)**(-a)
+
+
+def scale_free_power_law(radius, density):
+    """
+    Elliptical galaxy scale-free power-law model
+    for total mass density profiles
+    """
+    from scipy.optimize import curve_fit
+    
+    rho_o = density[-1]
+    r_o = radius[-1]
+    popt2, pcov2 = curve_fit(lambda x, a: fit_function(x, rho_o, r_o, a),
+                             radius, density)
+    print('power law index', popt2[0])
+    fit_y = fit_function(radius, rho_o, r_o, *popt2)
+    return popt2[0], fit_y
 

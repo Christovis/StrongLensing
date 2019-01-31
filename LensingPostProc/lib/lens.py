@@ -6,7 +6,7 @@ import pandas as pd
 from astropy import units as u
 from astropy import constants as const
 from astropy.cosmology import LambdaCDM
-sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingMap/')
+sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingAnalysis/')
 import LM_main_box
 from LM_main_box import plant_Tree
 sys.path.insert(0, '/cosma5/data/dp004/dc-beck3/StrongLensing/LensingPostProc/lib/')
@@ -38,8 +38,8 @@ def select_particles(_pos, _centre, _radius, _regiontype):
                         (np.abs(_pos[:, 1]) < 0.5*_radius) &
                         (np.abs(_pos[:, 2]) < 0.5*_radius))[0]
     elif _regiontype == 'sphere':
-        _dist = np.sqrt(_pos[:, 0]**2 +
-                        _pos[:, 1]**2 +
+        _dist = np.sqrt(_pos[:, 0]**2 + \
+                        _pos[:, 1]**2 + \
                         _pos[:, 2]**2)
         indx = np.where(_dist <= _radius)[0]
     return indx
@@ -78,7 +78,7 @@ def load_stars(snapnum, snapfile):
     return star
 
 
-def load_baryons(snapnum, snapfile):
+def load_gas(snapnum, snapfile):
     """
     Parameters
     ----------
@@ -92,13 +92,12 @@ def load_baryons(snapnum, snapfile):
     indx : np.array
     """
     s = read_hdf5.snapshot(snapnum, snapfile)
-    s.read(["Coordinates", 
-            "Masses",
-            "Velocities",],
-            parttype=[0])
+    s.read([
+        "Coordinates", 
+        "Masses",
+        ], parttype=[0])
 
     gas = {'Pos' : s.data['Coordinates']['gas'],
-            'Vel' : s.data['Velocities']['gas'],
             'Mass' : s.data['Masses']['gas'],
             }
     return gas
@@ -106,15 +105,15 @@ def load_baryons(snapnum, snapfile):
 
 def load_dm(snapnum, snapfile):
     s = read_hdf5.snapshot(snapnum, snapfile)
-    s.read(["Coordinates", "Masses", "Velocities"],
-           parttype=[1])
+    s.read([
+        "Coordinates",
+        "Masses",
+        ], parttype=[1])
     dm_pos = s.data['Coordinates']['dm']
     dm_mass = s.data['Masses']['dm']   #[Msol]
-    dm_vel = s.data['Velocities']['dm']
 
     dm = {'Pos' : dm_pos,
-            'Vel' : dm_vel,
-            'Mass' : dm_mass}
+          'Mass' : dm_mass}
     return dm
 
 
@@ -163,96 +162,222 @@ def load_subhalos(snapnum, snapfile, lafile, strong_lensing=1):
     df = df.set_index('HF_ID')
 
     if strong_lensing == True:
-        LA = pickle.load(open(lafile, 'rb'))  #, encoding='latin1')
+        LA = pickle.load(open(lafile, "rb"))  #, encoding='latin1')
         print('Processing the following file: \n %s' % (lafile))
         print('which contains %d lenses' % len(LA['HF_ID'][:]))
         print('with max. einst. radius: %f', np.max(LA['Sources']['Rein'][:]))
         
         # Output only subhalos acting as gravitational strong lenses
         # Find intersection
-        ladf = pd.DataFrame({'Rein' : LA['Sources']['Rein'],
-                             'ZS' : LA['zs'],
-                             'FOV' : LA["FOV"],
-                             'HF_ID' : LA["HF_ID"]})
+        ladf = pd.DataFrame({
+            'HF_ID' : LA["HF_ID"],
+            'ZS' : LA["zs"],
+            'FOV' : LA["FOV"],
+            'Rein' : LA["Sources"]["Rein"],
+            })
         ladf['Nimg'] = pd.Series(0, index=ladf.index)
         ladf['theta'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
         ladf['delta_t'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
         ladf['mu'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+        ladf['TCC'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
         ladf['DMAP'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
         for ll in range(len(ladf.index.values)):
             ladf['Nimg'][ll] = len(LA['Sources']['mu'][ll])
             ladf['theta'][ll] = LA['Sources']['theta'][ll]
             ladf['delta_t'][ll] = LA['Sources']['delta_t'][ll]
             ladf['mu'][ll] = LA['Sources']['mu'][ll]
+            ladf['TCC'][ll] = LA['Sources']['TCC'][ll]
             ladf['DMAP'][ll] = LA['DMAP'][ll]
         
         ladf = ladf.sort_values(by=['HF_ID'])
-        ladf = ladf.set_index('HF_ID')
-        df = df[df.index.isin(ladf.index.values)]
-        
-        # Attach ladf to df
-        df['ZL'] = pd.Series(s.header.redshift, index=ladf.index)
-        df['Rein'] = ladf['Rein']
-        df['ZS'] = ladf['ZS']
-        df['Nimg'] = ladf['Nimg']
-        df['FOV'] = ladf['FOV']
-        df['theta'] = ladf['theta']
-        df['delta_t'] = ladf['delta_t']
-        df['mu'] = ladf['mu']
-        df['DMAP'] = ladf['DMAP']
+        ladf = ladf.set_index('HF_ID')  # may contain dublicates
+        #df = df[df.index.isin(ladf.index.values)]
+        # Attach df to ladf
+        ladf = ladf.join(df, how='inner')
+
+        ladf['ZL'] = pd.Series(s.header.redshift, index=ladf.index)
+        #df['Rein'] = ladf['Rein']
+        #df['ZS'] = ladf['ZS']
+        #df['Nimg'] = ladf['Nimg']
+        #df['FOV'] = ladf['FOV']
+        #df['theta'] = ladf['theta']
+        #df['delta_t'] = ladf['delta_t']
+        #df['mu'] = ladf['mu']
+        #df['DMAP'] = ladf['DMAP']
        
         # Find bound particles for lenses
         BPF = BoundParticleFinder(s)
-        subhalo_particles = BPF.find_bound_subhalo_particles(df['Index'].values, 4)
-        df['BPF'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
-        for ll in range(len(df.index.values)):
-            df['BPF'][ll] = subhalo_particles[ll].astype(int)
+        subhalo_particles = BPF.find_bound_subhalo_particles(ladf['Index'].values, 4)
+        ladf['BPF'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+        for ll in range(len(ladf.index.values)):
+            ladf['BPF'][ll] = subhalo_particles[ll].astype(int)
 
         # Initialize
-        df['Mlens'] = pd.Series(0, index=df.index)
+        ladf['Mlens'] = pd.Series(0, index=ladf.index)
     elif strong_lensing == False:
         ladf = pd.read_hdf(lafile, key='nonlenses')
         ladf = ladf.sort_values(by=['HF_ID'])
         ladf = ladf.set_index('HF_ID')
-
+        print('Processing the following file: \n %s' % (lafile))
+        print('which contains %d subhalos' % len(ladf.index.values))
+        
         # Output only subhalos do not act as gravitational strong lenses
-        # Find intersection
-        df = df[df.index.isin(ladf.index.values)]
+        # Attach df to ladf
+        ladf = ladf.rename(columns = {'zl':'ZL'})
+        ladf = ladf.rename(columns = {'zs':'ZS'})
+        ladf = ladf.join(df, how='inner')
 
-        # Attach ladf to df
-        df['ZL'] = pd.Series(s.header.redshift, index=df.index)
-        df['Rein'] = ladf['Rein'].values
-        df['ZS'] = ladf['zs'].values
-        df['FOV'] = ladf['FOV'].values
-        df['mu'] = ladf['mu'].values
-        df['theta'] = ladf['theta'].values
-        df['delta_t'] = ladf['delta_t'].values
-        # Initialize
-        df['Mlens'] = pd.Series(0, index=df.index)
 
     # Initialize
-    df['Mdyn'] = pd.Series(0, index=df.index)
-    df['Vrms_Rein'] = pd.Series(0, index=df.index)
-    df['Vrms_Rhm'] = pd.Series(0, index=df.index)
-    df['Ellip3D'] = pd.Series(0.0, dtype=np.float, index=df.index)
-    df['Prolat3D'] = pd.Series(0.0, dtype=np.float, index=df.index)
-    df['VelProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['VelProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['VrmsProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['VrmsProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['SDensProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['SDensProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['SMProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['SMProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['SCVProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    df['SCVProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    #df['DMDensProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    #df['DMDensProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    ladf['Mdyn'] = pd.Series(0, index=ladf.index)
+    ladf['Mtotal'] = pd.Series(0, index=ladf.index)
+    ladf['Vrms_Rein'] = pd.Series(0, index=ladf.index)
+    ladf['Vrms_Rhm'] = pd.Series(0, index=ladf.index)
+    ladf['PA'] = pd.Series(0.0, dtype=np.float, index=ladf.index)
+    ladf['Ellip2D'] = pd.Series(0.0, dtype=np.float, index=ladf.index)
+    ladf['Eccen2D'] = pd.Series(0.0, dtype=np.float, index=ladf.index)
+    ladf['Ellip3D'] = pd.Series(0.0, dtype=np.float, index=ladf.index)
+    ladf['Eccen3D'] = pd.Series(0.0, dtype=np.float, index=ladf.index)
+    ladf['Prolat3D'] = pd.Series(0.0, dtype=np.float, index=ladf.index)
+    ladf['VelProfRad'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['VelProfMeas'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['VrmsProfRad'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['VrmsProfMeas'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['SDensProfRad'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['SDensProfMeas'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['SMProfRad'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['SMProfMeas'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['SCVProfRad'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['SCVProfMeas'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['DMDensProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    ladf['DMDensProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
+    ladf['GDensProfRad'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['GDensProfMeas'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['power_law_index'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
+    ladf['power_law_profile'] = pd.Series(0, index=ladf.index).astype(np.ndarray)
     #df['DMMProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
     #df['DMMProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
     #df['DMCVProfRad'] = pd.Series(0, index=df.index).astype(np.ndarray)
     #df['DMCVProfMeas'] = pd.Series(0, index=df.index).astype(np.ndarray)
-    return df
+    return ladf
+
+
+def add_properties(halo_stars, halo_dm, halo_gas,
+        lens, lenses, cosmo, s, indxdrop, ll, strong_lensing):
+    """
+    """
+    print('nr of halo_stars', len(halo_stars['Mass']))
+    if len(halo_stars['Mass']) < 100 or lens['Rein'] < 0.3:
+        # min. num. of particles to compute shape and profiles
+        indxdrop.append(lenses.index.values[ll])
+        return lenses, indxdrop
+    else:
+        if strong_lensing == 1:
+            Rein_arc = lens['Rein']*u.arcsec
+            Rein = Rein_arc.to_value('rad') * \
+                    cosmo.angular_diameter_distance(lens['ZL']).to('kpc')
+            
+            _dist = np.sqrt(halo_stars['Pos'][:, 0]**2 + \
+                            halo_stars['Pos'][:, 1]**2 + \
+                            halo_stars['Pos'][:, 2]**2)
+            indx = np.where(_dist <= Rein.to_value('kpc'))[0]
+            #if len(indx) > 1:
+            #    pass
+            #else:
+            #    return lenses, indxdrop
+            ## Mass strong lensing
+            lenses['Mlens'].values[ll] = lppf.mass_lensing(
+                    Rein.to_value('kpc'),
+                    lens['ZL'], lens['ZS'],
+                    cosmo)
+
+            # Mass stellar kinematics
+            vrms = lppf.vrms_at_radius(
+                    halo_stars, lens['Vel'],
+                    float(Rein.to_value('kpc')),
+                    )
+            
+            lenses['Vrms_Rein'][ll] = vrms
+            lenses['Mdyn'][ll] = lppf.mass_dynamical(
+                    vrms*u.km/u.second, Rein)
+            
+            lenses['Mtotal'][ll] = np.sum(halo_stars['Mass'][indx]) + \
+                                   np.sum(halo_dm['Mass']) + \
+                                   np.sum(halo_gas['Mass'])
+
+        # Ellipticity & Prolateness
+        lenses['PA'][ll], lenses['Eccen2D'][ll], lenses['Ellip2D'][ll] = lppf.morphology2D(
+                halo_stars['Pos'], 0)
+        lenses['Ellip3D'][ll], lenses['Eccen3D'][ll], lenses['Prolat3D'][ll] = lppf.morphology3D(
+                halo_stars['Pos'])
+        
+        ## Density Profile
+        #radii = np.array([0.05, 1])*lens['Rstellarhalfmass']
+        if lens['Mass'] > 1e14:
+            radii = np.array([0.6, 70])
+            nr_of_bins = 80
+        elif lens['Mass'] > 1e13:
+            radii = np.array([0.6, 7])
+            nr_of_bins = 50
+        elif lens['Mass'] > 1e12:
+            radii = np.array([0.4, 7])
+            nr_of_bins = 40
+        lenses['SDensProfRad'][ll], lenses['SDensProfMeas'][ll] = lppf.profiles(
+                halo_stars['Pos'], halo_stars['Mass'], np.array([]),
+                'density', 4, s, radii[0], radii[1], nr_of_bins)
+        lenses['DMDensProfRad'][ll], lenses['DMDensProfMeas'][ll] = lppf.profiles(
+                halo_dm['Pos'], halo_dm['Mass'], np.array([]),
+                'density', 4, s, radii[0], radii[1], nr_of_bins)
+        lenses['GDensProfRad'][ll], lenses['GDensProfMeas'][ll] = lppf.profiles(
+                halo_gas['Pos'], halo_gas['Mass'], np.array([]),
+                'density', 4, s, radii[0], radii[1], nr_of_bins)
+        total_density = lenses['SDensProfMeas'].values[ll] + \
+                        lenses['DMDensProfMeas'].values[ll] + \
+                        lenses['GDensProfMeas'].values[ll]
+        lenses['power_law_index'][ll], lenses['power_law_profile'][ll] = lppf.scale_free_power_law(
+                lenses['SDensProfRad'].values[ll], total_density)
+
+        return lenses, indxdrop
+
+#indx = load.select_particles(dm['Pos'], lens['Pos'],
+#                             lens['Rstellarhalfmass'], 'sphere')
+#halo_dm = {'Pos' : dm['Pos'][indx, :],
+#           'Vel' : dm['Vel'][indx, :],
+#           'Mass' : dm['Mass'][indx]}
+#halo_dm['Pos'] -= lens['Pos']
+
+#halo_stars = {'Pos' : stars['Pos'][lens['BPF'][0]:lens['BPF'][1], :],
+#              'Vel' : stars['Vel'][lens['BPF'][0]:lens['BPF'][1], :],
+#              'Mass' : stars['Mass'][lens['BPF'][0]:lens['BPF'][1]]}
+#halo_stars['Pos'] = halo_stars['Pos'] - lenses['Pos'].values[ll]
+#halo_stars['Vel'] = halo_stars['Vel'] - lenses['Vel'].values[ll]
+#
+#halo_dm = {'Pos' : dm['Pos'][lens['BPF'][0]:lens['BPF'][1], :],
+#           'Vel' : dm['Vel'][lens['BPF'][0]:lens['BPF'][1], :],
+#           'Mass' : dm['Mass'][lens['BPF'][0]:lens['BPF'][1]]}
+#halo_dm['Pos'] = halo_dm['Pos'] - lenses['Pos'].values[ll]
+#halo_dm['Vel'] = halo_dm['Vel'] - lenses['Vel'].values[ll]
+
+#lenses['DMDensProfRad'][ll], lenses['DMDensProfMeas'][ll] = lppf.profiles(
+#        halo_dm['Pos'], halo_dm['Mass'], np.array([]),
+#        'density', 1, s, radii[0], radii[1])
+
+## Mass Profile
+#lenses['SMProfRad'][ll], lenses['SMProfMeas'][ll] = lppf.profiles(
+#        halo_stars['Pos'], halo_stars['Mass'], np.array([]),
+#        'mass', 4, s, radii[0], radii[1])
+## Circular Velocity Profile
+#lenses['SCVProfRad'][ll], lenses['SCVProfMeas'][ll] = lppf.profiles(
+#        halo_stars['Pos'], halo_stars['Mass'], np.array([]),
+#        'circular_velocity', 4, s, radii[0], radii[1])
+## Mass Profile
+#lenses['DMMProfRad'][ll], lenses['DMMProfMeas'][ll] = lppf.profiles(
+#        halo_dm['Pos'], halo_dm['Mass'], np.array([]),
+#        'mass', 1, s, radii[0], radii[1])
+## Circular Velocity Profile
+#lenses['DMCVProfRad'][ll], lenses['DMCVProfMeas'][ll] = lppf.profiles(
+#        halo_dm['Pos'], halo_dm['Mass'], np.array([]),
+#        'circular_velocity', 1, s, radii[0], radii[1])
 
 
 class Lenses():
